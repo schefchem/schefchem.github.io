@@ -8,7 +8,7 @@ const state = {
   completedUnits: JSON.parse(localStorage.getItem("schefchem-completed") || "[]"),
   darkMode: localStorage.getItem("schefchem-dark") === "1",
 };
-const PHENOLPHTHALEIN_TRANSITION_PH = 8.2;
+const PHENOLPHTHALEIN_PINK_START_PH = 8.2;
 const PHENOLPHTHALEIN_PINK = "rgba(255, 100, 150, 0.45)";
 const SOLUTION_BLUE = "rgba(100, 180, 255, 0.33)";
 const PARTICLE_CONCENTRATION_SCALE = 8;
@@ -192,6 +192,10 @@ function fmtExp(v) {
   return v.toExponential(3);
 }
 
+function calcPFromK(kValue) {
+  return -Math.log10(Math.max(1e-30, kValue));
+}
+
 function clamp(v, min, max) {
   return Math.min(max, Math.max(min, v));
 }
@@ -234,7 +238,8 @@ function drawLineGraph(canvas, points, { xMax, yMax = 14, yMin = 0, highlight = 
   const plotW = w - m.l - m.r;
   const plotH = h - m.t - m.b;
 
-  const toX = (x) => m.l + (x / Math.max(1e-9, xMax)) * plotW;
+  const xMaxSafe = xMax > 0 ? xMax : 1;
+  const toX = (x) => m.l + (x / xMaxSafe) * plotW;
   const toY = (y) => m.t + ((yMax - y) / (yMax - yMin)) * plotH;
 
   if (highlight) {
@@ -982,10 +987,11 @@ function renderUnit8() {
 
     if (titration.type === "wasb") {
       const Ka = titration.Ka;
-      const pKa = -Math.log10(Ka);
+      const pKa = calcPFromK(Ka);
       if (nTitrant === 0) {
         const C = nAnalyte / Vtot;
-        const H = (-Ka + Math.sqrt(Ka * Ka + 4 * Ka * C)) / 2;
+        const discriminant = Ka * Ka + 4 * Ka * C;
+        const H = discriminant >= 0 ? (-Ka + Math.sqrt(discriminant)) / 2 : 1e-7;
         pH = -Math.log10(H);
         species.H = H;
         species.OH = Kw / H;
@@ -999,7 +1005,7 @@ function renderUnit8() {
         species.OH = Kw / species.H;
         species.HA = nHA / Vtot;
         species.A = nA / Vtot;
-        hh = `pH = pKa + log([A⁻]/[HA]) = ${(-Math.log10(Ka)).toFixed(2)} + log(${fmtExp(species.A)}/${fmtExp(species.HA)})`;
+        hh = `pH = pKa + log([A⁻]/[HA]) = ${pKa.toFixed(2)} + log(${fmtExp(species.A)}/${fmtExp(species.HA)})`;
         explanation = "Buffer region: both HA and A⁻ present, Henderson–Hasselbalch applies.";
       } else if (Math.abs(nTitrant - nAnalyte) < 1e-12) {
         const cA = nAnalyte / Vtot;
@@ -1060,7 +1066,7 @@ function renderUnit8() {
 
   function relationText(pH) {
     if (titration.type !== "wasb") return "pKa comparison is most informative for weak-acid titrations.";
-    const pKa = -Math.log10(titration.Ka);
+    const pKa = calcPFromK(titration.Ka);
     if (Math.abs(pH - pKa) < 0.05) return "pH ≈ pKa: buffer midpoint (half-equivalence), [HA] ≈ [A⁻].";
     if (pH < pKa) return "pH < pKa: protonated form (HA) dominates.";
     return "pH > pKa: deprotonated form (A⁻) dominates.";
@@ -1106,7 +1112,7 @@ function renderUnit8() {
     if (!microView) {
       const last = titration.points[titration.points.length - 1] || { y: 7 };
       // Phenolphthalein appears pink in basic solution above ~8.2 pH.
-      ids.liquid.style.background = last.y > PHENOLPHTHALEIN_TRANSITION_PH ? PHENOLPHTHALEIN_PINK : SOLUTION_BLUE;
+      ids.liquid.style.background = last.y > PHENOLPHTHALEIN_PINK_START_PH ? PHENOLPHTHALEIN_PINK : SOLUTION_BLUE;
       return;
     }
 
@@ -1305,6 +1311,7 @@ function renderUnit9() {
     const E0 = Number(e0.value);
     const ne = Math.max(1, Number(n.value));
     const Q = Math.max(1e-12, Number(q.value));
+    // Natural-log Nernst form: E = E° - (RT/nF)lnQ.
     const E = E0 - (R * T / (ne * F)) * Math.log(Q);
     const dG = -ne * F * E / 1000;
     out.textContent = `E = ${E.toFixed(3)} V, ΔG = ${dG.toFixed(2)} kJ/mol (${dG < 0 ? "spontaneous" : "non-spontaneous"})`;
