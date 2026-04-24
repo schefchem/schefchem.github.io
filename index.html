@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ScheFchem — AP Chemistry Interactive Learning</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>ScheFchem</h1>
+      <p>AP Chemistry Interactive Learning Studio</p>
+    </div>
+    <div class="topbar-actions">
+      <button id="darkModeToggle" class="ghost-btn" aria-label="Toggle dark mode">🌙 Theme</button>
+      <span id="progressBadge" class="badge">0 / 9 complete</span>
+    </div>
+  </header>
+
+  <nav class="unit-nav" id="unitNav" aria-label="AP Chemistry Units">
+    <button class="tab active" data-unit="unit1">1. Atomic Structure & Properties</button>
+    <button class="tab" data-unit="unit2">2. Molecular & Ionic Compound Structure</button>
+    <button class="tab" data-unit="unit3">3. Intermolecular Forces & Properties</button>
+    <button class="tab" data-unit="unit4">4. Chemical Reactions</button>
+    <button class="tab" data-unit="unit5">5. Kinetics</button>
+    <button class="tab" data-unit="unit6">6. Thermodynamics</button>
+    <button class="tab" data-unit="unit7">7. Equilibrium</button>
+    <button class="tab emphasis" data-unit="unit8">8. Acids & Bases</button>
+    <button class="tab" data-unit="unit9">9. Applications of Thermodynamics</button>
+  </nav>
+
+  <main>
+    <section id="unitContainer" class="unit-container fade-in" aria-live="polite"></section>
+  </main>
+
+  <template id="quizTemplate">
+    <section class="card quiz-card">
+      <h3>Quick Check</h3>
+      <p class="quiz-question"></p>
+      <div class="quiz-options"></div>
+      <p class="quiz-feedback"></p>
+    </section>
+  </template>
+
+  <script src="script.js"></script>
+</body>
+</html>
