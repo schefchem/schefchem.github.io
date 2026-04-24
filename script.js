@@ -8,6 +8,11 @@ const state = {
   completedUnits: JSON.parse(localStorage.getItem("schefchem-completed") || "[]"),
   darkMode: localStorage.getItem("schefchem-dark") === "1",
 };
+const PHENOLPHTHALEIN_TRANSITION_PH = 8.2;
+const PHENOLPHTHALEIN_PINK = "rgba(255, 100, 150, 0.45)";
+const SOLUTION_BLUE = "rgba(100, 180, 255, 0.33)";
+const PARTICLE_CONCENTRATION_SCALE = 8;
+const MIN_PARTICLE_COUNT = 22;
 
 if (state.darkMode) document.body.classList.add("dark");
 
@@ -193,7 +198,7 @@ function clamp(v, min, max) {
 
 function validateNumberInput(value, { min = 0, max = Infinity }) {
   const n = Number(value);
-  return Number.isFinite(n) && n > min && n <= max;
+  return Number.isFinite(n) && n >= min && n <= max;
 }
 
 function drawSimpleBar(canvas, fraction, color = "#2f7ef7", label = "") {
@@ -817,9 +822,9 @@ function renderUnit8() {
         <label for="titrantConc">Titrant concentration (M)</label>
         <input id="titrantConc" type="number" value="0.1" step="0.01" min="0.001" max="20" />
         <label for="kaInput">Ka (for weak acid, WA/SB)</label>
-        <input id="kaInput" type="number" value="0.0000018" step="0.0000001" min="0.00000000000001" max="1" />
+        <input id="kaInput" type="number" value="0.0000018" step="any" min="0.00000000000001" max="1" />
         <label for="kbInput">Kb (for weak base, SA/WB)</label>
-        <input id="kbInput" type="number" value="0.0000018" step="0.0000001" min="0.00000000000001" max="1" />
+        <input id="kbInput" type="number" value="0.0000018" step="any" min="0.00000000000001" max="1" />
         <label for="dropSize">Drop size (mL)</label>
         <input id="dropSize" type="number" value="0.1" step="0.1" min="0.05" max="5" />
         <div class="btn-row">
@@ -910,12 +915,12 @@ function renderUnit8() {
 
   function validateInputs() {
     const checks = [
-      validateNumberInput(ids.analyteConc.value, { min: 0, max: 20 }),
-      validateNumberInput(ids.analyteVol.value, { min: 0, max: 500 }),
-      validateNumberInput(ids.titrantConc.value, { min: 0, max: 20 }),
-      validateNumberInput(ids.dropSize.value, { min: 0, max: 5 }),
-      validateNumberInput(ids.kaInput.value, { min: 0, max: 1 }),
-      validateNumberInput(ids.kbInput.value, { min: 0, max: 1 }),
+      validateNumberInput(ids.analyteConc.value, { min: 1e-6, max: 20 }),
+      validateNumberInput(ids.analyteVol.value, { min: 0.01, max: 500 }),
+      validateNumberInput(ids.titrantConc.value, { min: 1e-6, max: 20 }),
+      validateNumberInput(ids.dropSize.value, { min: 0.01, max: 5 }),
+      validateNumberInput(ids.kaInput.value, { min: 1e-14, max: 1 }),
+      validateNumberInput(ids.kbInput.value, { min: 1e-14, max: 1 }),
     ];
     if (!checks.every(Boolean)) {
       ids.warning.className = "notice warn";
@@ -1100,15 +1105,16 @@ function renderUnit8() {
 
     if (!microView) {
       const last = titration.points[titration.points.length - 1] || { y: 7 };
-      ids.liquid.style.background = last.y > 8.2 ? "rgba(255, 100, 150, 0.45)" : "rgba(100, 180, 255, 0.33)";
+      // Phenolphthalein appears pink in basic solution above ~8.2 pH.
+      ids.liquid.style.background = last.y > PHENOLPHTHALEIN_TRANSITION_PH ? PHENOLPHTHALEIN_PINK : SOLUTION_BLUE;
       return;
     }
 
-    ids.liquid.style.background = "rgba(100, 180, 255, 0.33)";
+    ids.liquid.style.background = SOLUTION_BLUE;
     const entries = ["H", "OH", "HA", "A", "B", "BH"];
     entries.forEach((key) => {
       const amount = species[key] || 0;
-      const count = clamp(Math.round(Math.log10(amount + 1e-12) * 8 + 22), 2, 28);
+      const count = clamp(Math.round(Math.log10(amount + 1e-12) * PARTICLE_CONCENTRATION_SCALE + MIN_PARTICLE_COUNT), 2, 28);
       for (let i = 0; i < count; i++) {
         const p = document.createElement("div");
         p.className = "particle";
