@@ -817,9 +817,21 @@ function initBuffer() {
     });
   });
 
-  document.getElementById('buf-add-amount').addEventListener('input', e => {
-    document.getElementById('buf-add-label').textContent = parseFloat(e.target.value).toFixed(1);
-  });
+  const bufAddEl = document.getElementById('buf-add-amount');
+  if (bufAddEl) {
+    document.getElementById('buf-add-label').textContent = parseFloat(bufAddEl.value).toFixed(1);
+    bufAddEl.addEventListener('input', e => {
+      document.getElementById('buf-add-label').textContent = parseFloat(e.target.value).toFixed(1);
+    });
+  }
+
+  const bufConcEl = document.getElementById('buf-add-conc');
+  if (bufConcEl) {
+    document.getElementById('buf-add-conc-label').textContent = parseFloat(bufConcEl.value).toFixed(3);
+    bufConcEl.addEventListener('input', e => {
+      document.getElementById('buf-add-conc-label').textContent = parseFloat(e.target.value).toFixed(3);
+    });
+  }
 
   readBufferInputs();
   updateBufferDisplay();
@@ -827,51 +839,57 @@ function initBuffer() {
 }
 
 function readBufferInputs() {
-  bufferState.cHA = parseFloat(document.getElementById('buf-ha').value) || 0.1;
-  bufferState.cA  = parseFloat(document.getElementById('buf-a').value)  || 0.1;
+  bufferState.cHA = parseFloat(document.getElementById('buf-ha').value) || 0;
+  bufferState.cA  = parseFloat(document.getElementById('buf-a').value)  || 0;
   bufferState.vol = parseFloat(document.getElementById('buf-vol').value) || 100;
+  bufferState.excessH = 0;
+  bufferState.excessOH = 0;
 }
 
 function addToBuffer(type, amount) {
-  readBufferInputs();
   const addVol = parseFloat(document.getElementById('buf-add-amount').value);
   const addConc = parseFloat(document.getElementById('buf-add-conc').value) || 0.1;
   document.getElementById('buf-add-conc-label').textContent = addConc.toFixed(3);
 
   const totalVol = bufferState.vol + addVol;
-  const mmolHA = bufferState.cHA * bufferState.vol;
-  const mmolA  = bufferState.cA  * bufferState.vol;
-  const mmolAdded = addConc * addVol;
+  let mmolHA = bufferState.cHA * bufferState.vol;
+  let mmolA  = bufferState.cA  * bufferState.vol;
+  let exH    = (bufferState.excessH || 0) * bufferState.vol;
+  let exOH   = (bufferState.excessOH || 0) * bufferState.vol;
 
-  let newMmolHA = mmolHA;
-  let newMmolA  = mmolA;
+  let mmolAdded = addConc * addVol;
 
   if (type === 'acid') {
+    const nOH = Math.min(mmolAdded, exOH);
+    exOH -= nOH;
+    mmolAdded -= nOH;
+
     const consumed = Math.min(mmolAdded, mmolA);
-    newMmolHA += consumed;
-    newMmolA  -= consumed;
-    const excessH = mmolAdded - consumed;
-    if (excessH > 0) {
-      bufferState.vol = totalVol;
-      bufferState.cHA = newMmolHA / totalVol;
-      bufferState.cA  = newMmolA  / totalVol;
-      const cHtotal = (excessH / totalVol) + Math.pow(10, -bufferPH());
-      bufferState.cA = Math.max(0, bufferState.cA);
-      showToast('Buffer capacity exceeded! pH dropped sharply.');
-    }
+    mmolHA += consumed;
+    mmolA  -= consumed;
+    mmolAdded -= consumed;
+
+    exH += mmolAdded;
+    if (mmolAdded > 0) showToast('Buffer capacity exceeded! pH dropped sharply.');
   } else {
+    const nH = Math.min(mmolAdded, exH);
+    exH -= nH;
+    mmolAdded -= nH;
+
     const consumed = Math.min(mmolAdded, mmolHA);
-    newMmolHA -= consumed;
-    newMmolA  += consumed;
-    const excessOH = mmolAdded - consumed;
-    if (excessOH > 0) {
-      showToast('Buffer capacity exceeded! pH rose sharply.');
-    }
+    mmolHA -= consumed;
+    mmolA  += consumed;
+    mmolAdded -= consumed;
+
+    exOH += mmolAdded;
+    if (mmolAdded > 0) showToast('Buffer capacity exceeded! pH rose sharply.');
   }
 
   bufferState.vol = totalVol;
-  bufferState.cHA = Math.max(0, newMmolHA / totalVol);
-  bufferState.cA  = Math.max(0, newMmolA  / totalVol);
+  bufferState.cHA = mmolHA / totalVol;
+  bufferState.cA  = mmolA  / totalVol;
+  bufferState.excessH = exH / totalVol;
+  bufferState.excessOH = exOH / totalVol;
 
   const pH = bufferPH();
   bufferState.history.push({ action: type, pH });
@@ -885,10 +903,32 @@ function addToBuffer(type, amount) {
 }
 
 function bufferPH() {
-  if (bufferState.cHA <= 0 && bufferState.cA <= 0) return 7;
-  if (bufferState.cHA <= 0) return 14;
-  if (bufferState.cA  <= 0) return 0;
-  return bufferState.pKa + Math.log10(bufferState.cA / bufferState.cHA);
+  const Ka = Math.pow(10, -bufferState.pKa);
+  const C_W = bufferState.cHA + bufferState.cA;
+  const C_Na_net = bufferState.cA + (bufferState.excessOH || 0) - (bufferState.excessH || 0);
+
+  const Kw = 1e-14;
+
+  if (C_W === 0) {
+    if (C_Na_net > 0) return 14 + Math.log10(Math.max(1e-14, C_Na_net));
+    if (C_Na_net < 0) return -Math.log10(Math.max(1e-14, -C_Na_net));
+    return 7;
+  }
+
+  function delta(pH) {
+    const H = Math.pow(10, -pH);
+    const OH = Kw / H;
+    const A_minus = C_W * Ka / (H + Ka);
+    return H + C_Na_net - OH - A_minus;
+  }
+
+  let low = 0, high = 14;
+  for (let i = 0; i < 60; i++) {
+    const mid = (low + high) / 2;
+    if (delta(mid) > 0) low = mid;
+    else high = mid;
+  }
+  return low;
 }
 
 function resetBuffer() {
@@ -905,26 +945,34 @@ function updateBufferDisplay() {
   document.getElementById('buf-ha-val').textContent = bufferState.cHA.toFixed(4) + ' M';
   document.getElementById('buf-a-val').textContent  = bufferState.cA.toFixed(4) + ' M';
 
-  const ratio = bufferState.cHA > 0 ? (bufferState.cA / bufferState.cHA).toFixed(3) : 'Infinity';
+  const ratio = bufferState.cHA > 0 ? (bufferState.cA / bufferState.cHA).toFixed(3) : '∞';
   document.getElementById('buf-ratio').textContent = ratio;
 
   const logRatio = bufferState.cHA > 0 && bufferState.cA > 0
     ? Math.log10(bufferState.cA / bufferState.cHA).toFixed(3)
     : '-';
-  document.getElementById('buf-hh-values').innerHTML =
-    `pKa = ${bufferState.pKa.toFixed(2)}<br>` +
-    `log([A-]/[HA]) = ${logRatio}<br>` +
-    `pH = ${bufferState.pKa.toFixed(2)} + ${logRatio} = <b>${pH.toFixed(3)}</b>`;
+    
+  let hhText = `pKa = ${bufferState.pKa.toFixed(2)}<br>log([A-]/[HA]) = ${logRatio}<br>`;
+  if (logRatio !== '-') {
+    const hb_ph = (bufferState.pKa + parseFloat(logRatio)).toFixed(3);
+    hhText += `pH (approx) = <b>${hb_ph}</b><br><span style="font-size:0.85em; color: #888;">Exact pH: ${pH.toFixed(3)}</span>`;
+  } else {
+    hhText += `<b>Exact pH = ${pH.toFixed(3)}</b>`;
+  }
+  document.getElementById('buf-hh-values').innerHTML = hhText;
 
-  const capacity = Math.min(bufferState.cHA, bufferState.cA);
-  const initialCapacity = Math.min(
-    parseFloat(document.getElementById('buf-ha').getAttribute('data-init')) || bufferState.cHA,
-    parseFloat(document.getElementById('buf-a').getAttribute('data-init'))  || bufferState.cA
-  );
-  const fraction = initialCapacity > 0
-    ? Math.max(0, Math.min(1, capacity / initialCapacity))
-    : 0;
-  document.getElementById('cap-bar').style.width = (fraction * 100) + '%';
+  const cTotal = bufferState.cHA + bufferState.cA;
+  
+  // Usable buffer capacity (educational definition): 
+  // 100% at pH = pKa, scaling linearly to 0% at pH = pKa +/- 1
+  const pH_current = bufferPH();
+  let fraction = 1 - Math.abs(pH_current - bufferState.pKa);
+  fraction = Math.max(0, Math.min(1, fraction));
+
+  // If there's no weak acid/base at all, capacity is 0
+  if (cTotal <= 0) fraction = 0;
+
+  document.getElementById('cap-bar').style.width = (fraction * 100).toFixed(1) + '%';
   document.getElementById('cap-text').textContent = (fraction * 100).toFixed(0) + '%';
 }
 
@@ -1048,7 +1096,9 @@ function drawBufferGraph() {
   ctx.fillStyle = '#006699';
   ctx.fillText(' [A-] fraction', PAD.left + 4, PAD.top + 38);
   ctx.fillStyle = '#cc6600';
-  ctx.fillText(' Buffer region (pKa +/- 1)', PAD.left + 4, PAD.top + 52);
+  ctx.fillText(' pKa', PAD.left + 4, PAD.top + 52);
+  ctx.fillStyle = '#5588aa';
+  ctx.fillText(' Buffer region (pKa +/- 1)', PAD.left + 4, PAD.top + 66);
 }
 
 // ============================================================
@@ -1065,19 +1115,27 @@ function initPhKa() {
   phkaPieCanvas = document.getElementById('phka-pie');
   phkaPieCtx = phkaPieCanvas.getContext('2d');
 
-  document.getElementById('phka-pka').addEventListener('input', e => {
-    document.getElementById('phka-pka-val').textContent = parseFloat(e.target.value).toFixed(2);
-    drawPhKaGraph();
-    drawPie();
-    updatePhKaCard();
-  });
+  const pkaEl = document.getElementById('phka-pka');
+  if (pkaEl) {
+    document.getElementById('phka-pka-val').textContent = parseFloat(pkaEl.value).toFixed(2);
+    pkaEl.addEventListener('input', e => {
+      document.getElementById('phka-pka-val').textContent = parseFloat(e.target.value).toFixed(2);
+      drawPhKaGraph();
+      drawPie();
+      updatePhKaCard();
+    });
+  }
 
-  document.getElementById('phka-ph').addEventListener('input', e => {
-    document.getElementById('phka-ph-val').textContent = parseFloat(e.target.value).toFixed(2);
-    drawPhKaGraph();
-    drawPie();
-    updatePhKaCard();
-  });
+  const phEl = document.getElementById('phka-ph');
+  if (phEl) {
+    document.getElementById('phka-ph-val').textContent = parseFloat(phEl.value).toFixed(2);
+    phEl.addEventListener('input', e => {
+      document.getElementById('phka-ph-val').textContent = parseFloat(e.target.value).toFixed(2);
+      drawPhKaGraph();
+      drawPie();
+      updatePhKaCard();
+    });
+  }
 
   drawPhKaGraph();
   drawPie();
@@ -1342,6 +1400,24 @@ function initHeroCanvas() {
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
 
+  // Reset all inputs and selects to their default HTML states
+  // to prevent the browser from remembering them across soft reloads.
+  document.querySelectorAll('input').forEach(input => {
+    if (input.type === 'checkbox' || input.type === 'radio') {
+      input.checked = input.defaultChecked;
+    } else {
+      input.value = input.defaultValue;
+    }
+  });
+  document.querySelectorAll('select').forEach(select => {
+    const defaultOption = select.querySelector('option[selected]');
+    if (defaultOption) {
+      select.value = defaultOption.value;
+    } else if (select.options.length > 0) {
+      select.value = select.options[0].value;
+    }
+  });
+
   initGraph();
   initBeaker();
   initHeroCanvas();
@@ -1365,6 +1441,7 @@ document.addEventListener('DOMContentLoaded', () => {
   ['analyte-vol', 'analyte-conc', 'titrant-conc'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
+        document.getElementById(id + '-label').textContent = parseFloat(el.value).toFixed(id.includes('vol') ? 0 : 3);
         el.addEventListener('input', (e) => {
             document.getElementById(id + '-label').textContent = parseFloat(e.target.value).toFixed(id.includes('vol') ? 0 : 3);
             readInputs();
@@ -1382,9 +1459,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  document.getElementById('drop-size').addEventListener('input', e => {
-    document.getElementById('drop-size-label').textContent = parseFloat(e.target.value).toFixed(1);
-  });
+  const dsEl = document.getElementById('drop-size');
+  if (dsEl) {
+    document.getElementById('drop-size-label').textContent = parseFloat(dsEl.value).toFixed(1);
+    dsEl.addEventListener('input', e => {
+      document.getElementById('drop-size-label').textContent = parseFloat(e.target.value).toFixed(1);
+    });
+  }
 
   document.getElementById('add-drop').addEventListener('click', () => {
     readInputs();
