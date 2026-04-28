@@ -12,7 +12,7 @@
   <header id="site-header">
     <div class="header-inner">
       <div class="logo" style="cursor: pointer;" onclick="navigateTo('overview')">
-        <img src="logo.png" alt="SchefChem Logo" class="site-logo" />
+        <img src="icon.png" alt="SchefChem Logo" class="site-logo" />
       </div>
       <nav id="main-nav">
         <button class="nav-btn" data-section="titration">Titration Lab</button>
@@ -38,17 +38,14 @@
       <div class="overview-grid">
         <div class="overview-card" onclick="navigateTo('titration')">
           <h3>Titration Simulator</h3>
-          <p>Add titrant drop-by-drop and watch pH change in real time. Choose SA/SB, WA/SB, or SA/WB systems.</p>
           <span class="card-tag">Interactive Lab</span>
         </div>
         <div class="overview-card" onclick="navigateTo('buffers')">
           <h3>Buffer Systems</h3>
-          <p>Explore how buffers resist pH change. Visualize the Henderson-Hasselbalch equation in action.</p>
           <span class="card-tag">Simulation</span>
         </div>
         <div class="overview-card" onclick="navigateTo('ph-pka')">
           <h3>pH &amp; pKa Relationships</h3>
-          <p>Understand how pH compares to pKa determines acid/base speciation at every point in a titration.</p>
           <span class="card-tag">Concept Map</span>
         </div>
       </div>
@@ -82,7 +79,6 @@
     <section id="section-titration" class="section">
       <div class="section-header">
         <h2>Titration Simulator</h2>
-        <p>Configure your system and add titrant to explore how pH evolves.</p>
       </div>
 
       <div class="titration-layout">
@@ -256,7 +252,6 @@
     <section id="section-buffers" class="section">
       <div class="section-header">
         <h2>Buffer Systems</h2>
-        <p>Buffers resist pH change. Explore how adding acid or base to a buffer affects pH and why it barely budges near the pKa.</p>
       </div>
 
       <div class="buffer-layout">
@@ -356,7 +351,6 @@
     <section id="section-ph-pka" class="section">
       <div class="section-header">
         <h2>pH &amp; pKa Relationships</h2>
-        <p>Explore how the ratio of acid to conjugate base depends on pH vs pKa.</p>
       </div>
 
       <div class="phka-layout">

@@ -85,106 +85,51 @@ function drawDownArrow(ctx, x, y, color) {
 // CHEMISTRY CALCULATIONS
 // ============================================================
 
-function calcSA_SB_pH(mmolAcid, mmolBase, totalVol) {
-  const netMmol = mmolAcid - mmolBase;
-  if (Math.abs(netMmol) < 1e-10) return 7.0;
-
-  if (netMmol > 0) {
-    return -Math.log10(netMmol / totalVol);
-  } else {
-    const cOH = Math.abs(netMmol) / totalVol;
-    const pOH = -Math.log10(cOH);
-    return 14 - pOH;
-  }
-}
-
-function calcWA_SB_pH(mmolAcid, mmolBase, totalVol, Ka1, Ka2) {
-  const C_weak = mmolAcid / totalVol;
-  const pKa1 = -Math.log10(Ka1);
-
-  if (!Ka2) {
-    if (mmolBase >= mmolAcid) {
-      const excessOH = (mmolBase - mmolAcid) / totalVol;
-      const weakBaseOH = Math.sqrt((1e-14 / Ka1) * C_weak);
-      return 14 + Math.log10(excessOH + weakBaseOH);
-    } else {
-      const cA = (mmolAcid - mmolBase) / totalVol;
-      const cB = mmolBase / totalVol;
-      let R = cB / (cA || 1e-10); 
-      const R_min = Math.sqrt(Ka1 / C_weak);
-      const R_max = Math.sqrt(C_weak * Ka1 / 1e-14);
-      R = Math.max(R_min, Math.min(R_max, R));
-      return pKa1 + Math.log10(R);
-    }
-  } else {
-    const pKa2 = -Math.log10(Ka2);
-    if (mmolBase < mmolAcid) {
-      const cA = (mmolAcid - mmolBase) / totalVol;
-      const cB = mmolBase / totalVol;
-      let R = cB / (cA || 1e-10);
-      const R_min = Math.sqrt(Ka1 / C_weak);
-      const R_max = Math.sqrt(Ka1 / Ka2);
-      R = Math.max(R_min, Math.min(R_max, R));
-      return pKa1 + Math.log10(R);
-    }
-    else if (mmolBase < 2 * mmolAcid) {
-      const cA = (2 * mmolAcid - mmolBase) / totalVol;
-      const cB = (mmolBase - mmolAcid) / totalVol;
-      let R = cB / (cA || 1e-10);
-      const R_min = Math.sqrt(Ka2 / Ka1);
-      const R_max = Math.sqrt(C_weak * Ka2 / 1e-14);
-      R = Math.max(R_min, Math.min(R_max, R));
-      return pKa2 + Math.log10(R);
-    }
-    else {
-      const excessOH = (mmolBase - 2 * mmolAcid) / totalVol;
-      const weakBaseOH = Math.sqrt((1e-14 / Ka2) * C_weak);
-      return 14 + Math.log10(excessOH + weakBaseOH);
-    }
-  }
-}
-
-function calcSA_WB_pH(mmolBase, mmolAcid, totalVol, Kb) {
-  const C_weak = mmolBase / totalVol;
-  const Ka_conj = 1e-14 / Kb;
-  const pKa = -Math.log10(Ka_conj);
-
-  if (mmolAcid >= mmolBase) {
-    const excessH = (mmolAcid - mmolBase) / totalVol;
-    const weakAcidH = Math.sqrt(Ka_conj * C_weak);
-    return -Math.log10(excessH + weakAcidH);
-  } else {
-    const cB = (mmolBase - mmolAcid) / totalVol;
-    const cBH = mmolAcid / totalVol;
-    let R = cB / (cBH || 1e-10);
-    const R_min = Math.sqrt(Ka_conj / C_weak);
-    const R_max = Math.sqrt(C_weak / Kb);
-    R = Math.max(R_min, Math.min(R_max, R));
-    return pKa + Math.log10(R);
-  }
-}
-
 function calculatePH(volAddedML) {
   const Va = state.analyteVol;
   const Ca = state.analyteConc;
   const Ct = state.titrantConc;
   const totalVol = Va + volAddedML;
-  const mmolAnalyte = Va * Ca;
-  const mmolTitrant = volAddedML * Ct;
+  const Kw = 1e-14;
 
-  let pH;
-  switch (state.type) {
-    case 'SA_SB':
-      pH = calcSA_SB_pH(mmolAnalyte, mmolTitrant, totalVol);
-      break;
-    case 'WA_SB':
-      pH = calcWA_SB_pH(mmolAnalyte, mmolTitrant, totalVol, state.ka, state.ka2);
-      break;
-    case 'SA_WB':
-      pH = calcSA_WB_pH(mmolAnalyte, mmolTitrant, totalVol, state.kb);
-      break;
+  function delta(pH) {
+    const H = Math.pow(10, -pH);
+    const OH = Kw / H;
+
+    if (state.type === 'SA_SB') {
+      const Na = (Ct * volAddedML) / totalVol;
+      const Cl = (Ca * Va) / totalVol;
+      return H + Na - OH - Cl;
+    } 
+    else if (state.type === 'WA_SB') {
+      const Na = (Ct * volAddedML) / totalVol;
+      const Ka1 = state.ka;
+      const Ka2 = state.ka2 || 0;
+      const D = H * H + H * Ka1 + Ka1 * Ka2;
+      const alpha1 = (H * Ka1) / D;
+      const alpha2 = (Ka1 * Ka2) / D;
+      const A_minus = ((Ca * Va) / totalVol) * alpha1;
+      const A_2minus = ((Ca * Va) / totalVol) * alpha2;
+      return H + Na - OH - A_minus - 2 * A_2minus;
+    } 
+    else if (state.type === 'SA_WB') {
+      const Ka = Kw / state.kb;
+      const D = H + Ka;
+      const alpha_BH = H / D;
+      const BH = ((Ca * Va) / totalVol) * alpha_BH;
+      const Cl = (Ct * volAddedML) / totalVol;
+      return H + BH - OH - Cl;
+    }
   }
-  return Math.max(0, Math.min(14, pH));
+
+  let low = 0;
+  let high = 14;
+  for (let i = 0; i < 60; i++) {
+    const mid = (low + high) / 2;
+    if (delta(mid) > 0) low = mid; 
+    else high = mid;
+  }
+  return Math.max(0, Math.min(14, low));
 }
 
 function equivalencePointVol() {
@@ -205,8 +150,6 @@ function getSpecies(volAddedML) {
   const Ca = state.analyteConc;
   const Ct = state.titrantConc;
   const totalVol = Va + volAddedML;
-  const mmolAnal = Va * Ca;
-  const mmolTit  = volAddedML * Ct;
   const pH = calculatePH(volAddedML);
   const cH  = Math.pow(10, -pH);
   const cOH = 1e-14 / cH;
@@ -215,18 +158,30 @@ function getSpecies(volAddedML) {
     { name: '[OH-]', val: cOH },
   ];
 
-  if (state.type === 'WA_SB' && !state.ka2) {
-    const mmolHA = Math.max(0, mmolAnal - mmolTit);
-    const mmolA  = Math.max(0, mmolTit - Math.max(0, mmolTit - mmolAnal));
-    const cHA = mmolHA / totalVol;
-    const cA  = Math.min(mmolTit, mmolAnal) / totalVol;
-    species.push({ name: '[HA]', val: cHA });
-    species.push({ name: '[A-]', val: cA });
+  if (state.type === 'WA_SB') {
+    const Ka1 = state.ka;
+    const Ka2 = state.ka2 || 0;
+    const D = cH * cH + cH * Ka1 + Ka1 * Ka2;
+    const alpha0 = (cH * cH) / D;
+    const alpha1 = (cH * Ka1) / D;
+    const alpha2 = (Ka1 * Ka2) / D;
+    const C_weak = (Va * Ca) / totalVol;
+    if (state.ka2) {
+      species.push({ name: '[H2A]', val: C_weak * alpha0 });
+      species.push({ name: '[HA-]', val: C_weak * alpha1 });
+      species.push({ name: '[A2-]', val: C_weak * alpha2 });
+    } else {
+      species.push({ name: '[HA]', val: C_weak * alpha0 });
+      species.push({ name: '[A-]', val: C_weak * alpha1 });
+    }
   } else if (state.type === 'SA_WB') {
-    const mmolB  = Math.max(0, mmolAnal - mmolTit);
-    const mmolBH = Math.min(mmolTit, mmolAnal);
-    species.push({ name: '[B]',   val: mmolB / totalVol });
-    species.push({ name: '[BH+]', val: mmolBH / totalVol });
+    const Ka = 1e-14 / state.kb;
+    const D = cH + Ka;
+    const alpha_BH = cH / D;
+    const alpha_B = Ka / D;
+    const C_base = (Va * Ca) / totalVol;
+    species.push({ name: '[B]',   val: C_base * alpha_B });
+    species.push({ name: '[BH+]', val: C_base * alpha_BH });
   }
 
   return species;
