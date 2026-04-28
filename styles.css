@@ -861,11 +861,16 @@ input[type="range"] {
 }
 
 @media (max-width: 768px) {
+  body { overflow: hidden; }
   #site-header, #app {
     display: none !important;
   }
   #mobile-unsupported {
     display: flex !important;
+    height: calc(100vh - 50px);
+  }
+  #site-footer {
+    background: white;
   }
 }
 
