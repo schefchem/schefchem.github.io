@@ -476,7 +476,6 @@ function getParticleColor(type) {
 }
 
 function spawnParticles() {
-  particles.length = 0;
   const W = beakerCanvas.width;
   const pH = state.dataPoints.length
     ? state.dataPoints[state.dataPoints.length - 1].pH
@@ -484,18 +483,36 @@ function spawnParticles() {
 
   const types = getParticleTypes(pH);
 
-  for (let i = 0; i < 55; i++) {
-    const type = types[Math.floor(Math.random() * types.length)];
-    particles.push({
-      x: 20 + Math.random() * (W - 40),
-      y: 60 + Math.random() * 150,
-      vx: (Math.random() - 0.5) * 0.6,
-      vy: (Math.random() - 0.5) * 0.6,
-      r: 5 + Math.random() * 3,
-      type,
-      label: type,
-      alpha: 0.8 + Math.random() * 0.2,
-    });
+  if (particles.length === 0) {
+    for (let i = 0; i < 55; i++) {
+      const type = types[Math.floor(Math.random() * types.length)];
+      particles.push({
+        x: 20 + Math.random() * (W - 40),
+        y: 60 + Math.random() * 150,
+        vx: (Math.random() - 0.5) * 0.6,
+        vy: (Math.random() - 0.5) * 0.6,
+        r: 5 + Math.random() * 3,
+        type,
+        label: type,
+        alpha: 0.8 + Math.random() * 0.2,
+      });
+    }
+  } else {
+    // Only update types, keep positions/velocities intact for smooth transitions
+    for (let i = 0; i < particles.length; i++) {
+      const type = types[i % types.length];
+      particles[i].type = type;
+      particles[i].label = type;
+    }
+    // Optional: shuffle array so they don't uniformly switch in order
+    for (let i = particles.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tempType = particles[i].type;
+      particles[i].type = particles[j].type;
+      particles[i].label = particles[j].type;
+      particles[j].type = tempType;
+      particles[j].label = tempType;
+    }
   }
 }
 
@@ -729,6 +746,7 @@ function resetTitration() {
   drawGraph();
   updateDataPanel(0);
   document.getElementById('dp-ph').textContent = '-';
+  particles.length = 0;
   spawnParticles();
 }
 
@@ -1434,6 +1452,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('ka-group').style.display = state.type === 'WA_SB' ? '' : 'none';
       document.getElementById('kb-group').style.display = state.type === 'SA_WB' ? '' : 'none';
 
+      particles.length = 0;
       resetTitration();
     });
   });
