@@ -17,6 +17,13 @@ function navigateTo(sectionId) {
   if (target) target.classList.add('active');
   if (btn) btn.classList.add('active');
 
+  // Footer visibility: show only on the overview (main) page
+  const footer = document.getElementById('site-footer');
+  if (footer) {
+    if (sectionId === 'overview') footer.classList.add('footer-visible');
+    else footer.classList.remove('footer-visible');
+  }
+
   // Init subsystems on first visit
   if (sectionId === 'buffers' && !bufferInitialized) initBuffer();
   if (sectionId === 'ph-pka' && !phkaInitialized) initPhKa();
@@ -25,6 +32,14 @@ function navigateTo(sectionId) {
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => navigateTo(btn.dataset.section));
 });
+
+// Ensure footer visibility on initial load when overview is active
+(function() {
+  const footer = document.getElementById('site-footer');
+  const active = document.querySelector('.section.active');
+  if (!footer) return;
+  if (active && active.id === 'section-overview') footer.classList.add('footer-visible');
+})();
 
 // ============================================================
 // THEME TOGGLE

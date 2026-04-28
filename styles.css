@@ -29,6 +29,39 @@
   --transition: 0.1s ease; /* Fast, snappy transitions */
 }
 
+
+/* Footer (page-bottom, not fixed) */
+#site-footer {
+  display: none;
+  background: #fdf6e3;
+  border-top: 2px solid var(--border);
+  padding: 14px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  box-shadow: var(--shadow);
+}
+
+#site-footer .footer-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+#site-footer a {
+  color: var(--accent2);
+  text-decoration: underline;
+  font-weight: bold;
+}
+
+/* Footer visible only on main page (fixed at bottom) */
+#site-footer.footer-visible {
+  display: block;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 150;
+}
 [data-theme="dark"] {
   --bg: #1c1c1c;
   --surface: #2b2b2b;
