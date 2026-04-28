@@ -30,7 +30,7 @@ SchefChem - Unit 8: Acids & Bases
 
 #site-footer {
   display: none;
-  background: #fdf6e3;
+  background: var(--bg);
   border-top: 2px solid var(--border);
   padding: 14px 24px;
   text-align: center;
@@ -870,7 +870,7 @@ input[type="range"] {
     height: calc(100vh - 50px);
   }
   #site-footer {
-    background: white;
+    background: var(--surface);
   }
 }
 
