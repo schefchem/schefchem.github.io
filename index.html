@@ -9,14 +9,12 @@
 </head>
 <body data-theme="light">
 
-  <!-- ======== MOBILE UNSUPPORTED ======== -->
   <div id="mobile-unsupported">
     <img src="icon.png" alt="SchefChem Icon" class="mobile-icon" />
     <h2>Screen size not supported :(</h2>
     <p>schefChem requires a larger screen. Please use a computer!</p>
   </div>
 
-  <!-- ======== HEADER / NAV ======== -->
   <header id="site-header">
     <div class="header-inner">
       <div class="logo" style="cursor: pointer;" onclick="navigateTo('overview')">
@@ -31,12 +29,8 @@
     </div>
   </header>
 
-  <!-- ======== MAIN CONTENT ======== -->
   <main id="app">
 
-    <!-- ============================
-         SECTION: OVERVIEW
-    ============================= -->
     <section id="section-overview" class="section active">
       <div class="section-hero">
         <canvas id="hero-canvas"></canvas>
@@ -82,16 +76,13 @@
       <img src="avocado.png" alt="Avocado" class="corner-avocado" />
     </section>
 
-    <!-- ============================
-         SECTION: TITRATION
-    ============================= -->
     <section id="section-titration" class="section">
       <div class="section-header">
         <h2>Titration Lab</h2>
       </div>
 
       <div class="titration-layout">
-        <!-- LEFT: Controls -->
+        
         <div class="controls-panel">
           <div class="control-group">
             <label class="control-label">Titration Type</label>
@@ -175,9 +166,8 @@
           </div>
         </div>
 
-        <!-- CENTER: Graph + Beaker -->
         <div class="simulation-panel">
-          <!-- pH graph -->
+          
           <div class="graph-section">
             <div class="graph-header">
               <span class="graph-title">pH vs. Volume Added</span>
@@ -189,21 +179,18 @@
             <canvas id="graph-canvas" width="560" height="260"></canvas>
           </div>
 
-          <!-- Beaker visualization -->
           <div class="beaker-section" id="beaker-section" style="justify-content: center;">
             <div class="beaker-wrapper">
               <canvas id="beaker-canvas" width="220" height="260"></canvas>
             </div>
           </div>
 
-          <!-- Explanation box -->
           <div id="step-explanation-box" class="step-box">
             <div class="step-box-header">What's Happening</div>
             <div id="step-explanation-text"></div>
           </div>
         </div>
 
-        <!-- RIGHT: Data Panel -->
         <div class="data-panel">
           <div class="data-card highlight">
             <div class="data-label">Current pH</div>
@@ -254,9 +241,6 @@
       </div>
     </section>
 
-    <!-- ============================
-         SECTION: BUFFERS
-    ============================= -->
     <section id="section-buffers" class="section">
       <div class="section-header">
         <h2>Buffer Systems</h2>
@@ -353,9 +337,6 @@
       </div>
     </section>
 
-    <!-- ============================
-         SECTION: pH & pKa
-    ============================= -->
     <section id="section-ph-pka" class="section">
       <div class="section-header">
         <h2>pH &amp; pKa Relationships</h2>

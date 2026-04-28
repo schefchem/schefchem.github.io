@@ -1,13 +1,10 @@
 /* ============================================================
-   SchefChem - Unit 8: Acids & Bases
+SchefChem - Unit 8: Acids & Bases
    script.js - All interactive logic
    ============================================================ */
 
 'use strict';
 
-// ============================================================
-// NAVIGATION
-// ============================================================
 function navigateTo(sectionId) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -17,14 +14,12 @@ function navigateTo(sectionId) {
   if (target) target.classList.add('active');
   if (btn) btn.classList.add('active');
 
-  // Footer visibility: show only on the overview (main) page
   const footer = document.getElementById('site-footer');
   if (footer) {
     if (sectionId === 'overview') footer.classList.add('footer-visible');
     else footer.classList.remove('footer-visible');
   }
 
-  // Init subsystems on first visit
   if (sectionId === 'buffers' && !bufferInitialized) initBuffer();
   if (sectionId === 'ph-pka' && !phkaInitialized) initPhKa();
 }
@@ -33,7 +28,6 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => navigateTo(btn.dataset.section));
 });
 
-// Ensure footer visibility on initial load when overview is active
 (function() {
   const footer = document.getElementById('site-footer');
   const active = document.querySelector('.section.active');
@@ -41,9 +35,6 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
   if (active && active.id === 'section-overview') footer.classList.add('footer-visible');
 })();
 
-// ============================================================
-// THEME TOGGLE
-// ============================================================
 const themeToggle = document.getElementById('theme-toggle');
 let isDark = false;
 themeToggle.addEventListener('click', () => {
@@ -56,9 +47,6 @@ themeToggle.addEventListener('click', () => {
   if (phkaInitialized) drawPhKaGraph(), drawPie();
 });
 
-// ============================================================
-// TOAST NOTIFICATION
-// ============================================================
 function showToast(msg, duration = 2500) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -66,26 +54,20 @@ function showToast(msg, duration = 2500) {
   setTimeout(() => t.classList.remove('show'), duration);
 }
 
-// ============================================================
-// TITRATION STATE
-// ============================================================
 const state = {
-  type: 'SA_SB',   // SA_SB | WA_SB | SA_WB
-  analyteVol: 25,   // mL
-  analyteConc: 0.1, // M
-  titrantConc: 0.1, // M
+  type: 'SA_SB',   
+  analyteVol: 25,   
+  analyteConc: 0.1, 
+  titrantConc: 0.1, 
   ka: 1.8e-5,
-  ka2: null,        // Support for diprotic acids
+  ka2: null,        
   kb: 1.8e-5,
-  volAdded: 0,      // mL
-  dataPoints: [],   // [{vol, pH}]
+  volAdded: 0,      
+  dataPoints: [],   
   autoInterval: null,
   particleMode: true
 };
 
-// ============================================================
-// HELPER: DRAW ARROW
-// ============================================================
 function drawDownArrow(ctx, x, y, color) {
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -95,10 +77,6 @@ function drawDownArrow(ctx, x, y, color) {
   ctx.closePath();
   ctx.fill();
 }
-
-// ============================================================
-// CHEMISTRY CALCULATIONS
-// ============================================================
 
 function calculatePH(volAddedML) {
   const Va = state.analyteVol;
@@ -229,9 +207,6 @@ function getHHValues(volAddedML) {
   };
 }
 
-// ============================================================
-// STEP-BY-STEP EXPLANATIONS
-// ============================================================
 function generateExplanation(volAddedML) {
   const ep = equivalencePointVol();
   const hep = ep / 2;
@@ -282,9 +257,6 @@ function generateExplanation(volAddedML) {
   return `<b>Past equivalence:</b> Excess ${state.type === 'SA_WB' ? 'strong acid' : 'strong base'} dominates. pH is controlled by excess [${state.type === 'SA_WB' ? 'H+' : 'OH-'}]. pH = ${pH.toFixed(2)}.`;
 }
 
-// ============================================================
-// GRAPH RENDERING (Canvas)
-// ============================================================
 let graphCanvas, graphCtx;
 
 function initGraph() {
@@ -461,9 +433,6 @@ function drawGraph() {
   ctx.restore();
 }
 
-// ============================================================
-// BEAKER ANIMATION
-// ============================================================
 let beakerCanvas, beakerCtx;
 const particles = [];
 let animFrame;
@@ -475,25 +444,22 @@ function initBeaker() {
   runBeakerAnimation();
 }
 
-// ── Chemistry → target counts ────────────────────────────────────────────────
-// Returns {type: exactFloat} for the 55 visible particles, derived directly
-// from real species fractions so every drop produces a non-zero diff.
 const N_PARTICLES = 55;
 
 function targetCounts(pH) {
   const out = {};
 
   function set(type, frac) {
-    // frac is 0..1 share of the interesting-species slots
+    
     out[type] = (out[type] || 0) + frac;
   }
 
   if (state.type === 'SA_SB') {
-    // H+ and OH- on a log scale so they're visible across the whole range
-    const excess = Math.abs(pH - 7) / 7;          // 0 at neutral, 1 at pH 0 or 14
-    const ionSlots = Math.round(excess * 20);      // 0–20 slots
+    
+    const excess = Math.abs(pH - 7) / 7;          
+    const ionSlots = Math.round(excess * 20);      
     const ionType  = pH < 7 ? 'H+' : 'OH-';
-    const water    = N_PARTICLES - ionSlots - 12;  // 12 = 6 Cl- + 6 Na+
+    const water    = N_PARTICLES - ionSlots - 12;  
     for (let i = 0; i < ionSlots; i++)             out[ionType] = (out[ionType] || 0) + 1;
     for (let i = 0; i < Math.max(2, water); i++)   out['H2O']   = (out['H2O']   || 0) + 1;
     for (let i = 0; i < 6; i++)                    out['Cl-']   = (out['Cl-']   || 0) + 1;
@@ -515,7 +481,7 @@ function targetCounts(pH) {
       fHA = cH   / (cH + Ka1);
       fA1 = Ka1  / (cH + Ka1);
     }
-    // 40 slots for the interesting acid/base species, 7 Na+, rest H2O
+    
     const ACID_SLOTS = 40;
     const haN  = Math.round(fHA * ACID_SLOTS);
     const a1N  = Math.round(fA1 * ACID_SLOTS);
@@ -531,7 +497,6 @@ function targetCounts(pH) {
     return out;
   }
 
-  // SA_WB
   const cH  = Math.pow(10, -pH);
   const Ka  = 1e-14 / state.kb;
   const fBH = cH  / (cH + Ka);
@@ -549,10 +514,6 @@ function targetCounts(pH) {
   return out;
 }
 
-// ── Spawn / transmute ────────────────────────────────────────────────────────
-// prevCounts tracks what we TOLD the array to be, as rounded integers.
-// We diff against that, not against particles[i].type, so accumulated
-// floating-point fractions fire correctly across drops.
 let prevCounts = null;
 
 function spawnParticles() {
@@ -563,26 +524,24 @@ function spawnParticles() {
 
   const targets = targetCounts(pH);
 
-  // Round to integers, ensuring total == N_PARTICLES
   const rounded = {};
   let total = 0;
   for (const [t, v] of Object.entries(targets)) {
     rounded[t] = Math.max(0, Math.round(v));
     total += rounded[t];
   }
-  // Fix any rounding drift on the most abundant type
+  
   const drift = N_PARTICLES - total;
   if (drift !== 0) {
     const top = Object.keys(rounded).reduce((a, b) => rounded[a] >= rounded[b] ? a : b);
     rounded[top] = Math.max(0, rounded[top] + drift);
   }
 
-  // ── Cold start ─────────────────────────────────────────────────────────────
   if (particles.length === 0) {
     prevCounts = rounded;
     const flat = [];
     for (const [t, n] of Object.entries(rounded)) for (let i = 0; i < n; i++) flat.push(t);
-    // Shuffle
+    
     for (let i = flat.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [flat[i], flat[j]] = [flat[j], flat[i]];
@@ -603,7 +562,6 @@ function spawnParticles() {
     return;
   }
 
-  // ── Hot update: diff prevCounts → rounded ──────────────────────────────────
   const prev = prevCounts || rounded;
   prevCounts = rounded;
 
@@ -615,7 +573,6 @@ function spawnParticles() {
     else if (delta > 0) deficit[t] = delta;
   }
 
-  // Collect exactly the surplus particles (spatially random)
   const reactants = [];
   const surplusLeft = { ...surplus };
   for (const p of particles) {
@@ -629,7 +586,6 @@ function spawnParticles() {
     [reactants[i], reactants[j]] = [reactants[j], reactants[i]];
   }
 
-  // Build product list
   const products = [];
   for (const [t, n] of Object.entries(deficit)) for (let i = 0; i < n; i++) products.push(t);
   for (let i = products.length - 1; i > 0; i--) {
@@ -637,7 +593,6 @@ function spawnParticles() {
     [products[i], products[j]] = [products[j], products[i]];
   }
 
-  // Transmute only the reacting particles; flash them
   const n = Math.min(reactants.length, products.length);
   for (let i = 0; i < n; i++) {
     reactants[i].type     = products[i];
@@ -646,7 +601,6 @@ function spawnParticles() {
   }
 }
 
-// ── Colors ───────────────────────────────────────────────────────────────────
 function getParticleColor(type) {
   const colors = {
     'H+':  '#cc0000',
@@ -665,7 +619,6 @@ function getParticleColor(type) {
   return colors[type] || '#aaaaaa';
 }
 
-// ── Draw ─────────────────────────────────────────────────────────────────────
 function pHtoColor(pH, alpha = 1) {
   if (pH < 3)  return `rgba(204, 0, 0, ${alpha})`;
   if (pH < 5)  return `rgba(204, 102, 0, ${alpha})`;
@@ -692,11 +645,9 @@ function drawBeaker() {
     ? state.dataPoints[state.dataPoints.length - 1].pH
     : calculatePH(0);
 
-  // Solution tint
   ctx.fillStyle = pHtoColor(pH, 0.2);
   ctx.fillRect(bx + 2, by + 2, bw - 4, bh - 4);
 
-  // Beaker walls — U-shape, no spout
   ctx.strokeStyle = dark ? '#aaaaaa' : '#222222';
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -706,7 +657,6 @@ function drawBeaker() {
   ctx.lineTo(bx + bw, by);
   ctx.stroke();
 
-  // Rim flush with wall tops
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(bx, by);
@@ -716,7 +666,7 @@ function drawBeaker() {
   if (!state.particleMode) return;
 
   particles.forEach(p => {
-    // Reaction flash halo
+    
     if (p.reacting > 0) {
       const fa = p.reacting / 22;
       ctx.beginPath();
@@ -763,9 +713,6 @@ function runBeakerAnimation() {
   animFrame = requestAnimationFrame(tick);
 }
 
-// ============================================================
-// UI DATA UPDATES
-// ============================================================
 function updateDataPanel(vol) {
   const pH = calculatePH(vol);
   const cH  = Math.pow(10, -pH);
@@ -836,9 +783,6 @@ function formatSci(n) {
   return `${coeff.toFixed(2)}x10^${exp}`;
 }
 
-// ============================================================
-// TITRATION ACTIONS
-// ============================================================
 function addTitrant(mlToAdd) {
   const newVol = state.volAdded + mlToAdd;
   state.volAdded = newVol;
@@ -909,9 +853,6 @@ function startAuto() {
   }, 120);
 }
 
-// ============================================================
-// INPUT VALIDATION
-// ============================================================
 function readInputs() {
   state.analyteVol  = parseFloat(document.getElementById('analyte-vol').value) || 25;
   state.analyteConc = parseFloat(document.getElementById('analyte-conc').value) || 0.1;
@@ -924,10 +865,6 @@ function readInputs() {
   }
 }
 
-
-// ============================================================
-// BUFFER SECTION
-// ============================================================
 let bufferInitialized = false;
 const bufferState = {
   pKa: 4.76,
@@ -1118,14 +1055,11 @@ function updateBufferDisplay() {
   document.getElementById('buf-hh-values').innerHTML = hhText;
 
   const cTotal = bufferState.cHA + bufferState.cA;
-  
-  // Usable buffer capacity (educational definition): 
-  // 100% at pH = pKa, scaling linearly to 0% at pH = pKa +/- 1
+
   const pH_current = bufferPH();
   let fraction = 1 - Math.abs(pH_current - bufferState.pKa);
   fraction = Math.max(0, Math.min(1, fraction));
 
-  // If there's no weak acid/base at all, capacity is 0
   if (cTotal <= 0) fraction = 0;
 
   document.getElementById('cap-bar').style.width = (fraction * 100).toFixed(1) + '%';
@@ -1257,9 +1191,6 @@ function drawBufferGraph() {
   ctx.fillText(' Buffer region (pKa +/- 1)', PAD.left + 4, PAD.top + 66);
 }
 
-// ============================================================
-// pH & pKa SECTION
-// ============================================================
 let phkaInitialized = false;
 let phkaGraphCanvas, phkaGraphCtx;
 let phkaPieCanvas, phkaPieCtx;
@@ -1484,9 +1415,6 @@ function updatePhKaCard() {
   document.getElementById('phka-label-explain').textContent = explain;
 }
 
-// ============================================================
-// HERO CANVAS ANIMATION
-// ============================================================
 function initHeroCanvas() {
   const canvas = document.getElementById('hero-canvas');
   if (!canvas) return;
@@ -1551,13 +1479,8 @@ function initHeroCanvas() {
   tick();
 }
 
-// ============================================================
-// EVENT LISTENERS
-// ============================================================
 document.addEventListener('DOMContentLoaded', () => {
 
-  // Reset all inputs and selects to their default HTML states
-  // to prevent the browser from remembering them across soft reloads.
   document.querySelectorAll('input').forEach(input => {
     if (input.type === 'checkbox' || input.type === 'radio') {
       input.checked = input.defaultChecked;
