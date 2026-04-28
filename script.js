@@ -460,12 +460,187 @@ function initBeaker() {
   runBeakerAnimation();
 }
 
+// ── Chemistry → target counts ────────────────────────────────────────────────
+// Returns {type: exactFloat} for the 55 visible particles, derived directly
+// from real species fractions so every drop produces a non-zero diff.
+const N_PARTICLES = 55;
+
+function targetCounts(pH) {
+  const out = {};
+
+  function set(type, frac) {
+    // frac is 0..1 share of the interesting-species slots
+    out[type] = (out[type] || 0) + frac;
+  }
+
+  if (state.type === 'SA_SB') {
+    // H+ and OH- on a log scale so they're visible across the whole range
+    const excess = Math.abs(pH - 7) / 7;          // 0 at neutral, 1 at pH 0 or 14
+    const ionSlots = Math.round(excess * 20);      // 0–20 slots
+    const ionType  = pH < 7 ? 'H+' : 'OH-';
+    const water    = N_PARTICLES - ionSlots - 12;  // 12 = 6 Cl- + 6 Na+
+    for (let i = 0; i < ionSlots; i++)             out[ionType] = (out[ionType] || 0) + 1;
+    for (let i = 0; i < Math.max(2, water); i++)   out['H2O']   = (out['H2O']   || 0) + 1;
+    for (let i = 0; i < 6; i++)                    out['Cl-']   = (out['Cl-']   || 0) + 1;
+    for (let i = 0; i < 6; i++)                    out['Na+']   = (out['Na+']   || 0) + 1;
+    return out;
+  }
+
+  if (state.type === 'WA_SB') {
+    const cH  = Math.pow(10, -pH);
+    const Ka1 = state.ka;
+    const Ka2 = state.ka2 || 0;
+    let fHA, fA1, fA2 = 0;
+    if (state.ka2) {
+      const D = cH * cH + cH * Ka1 + Ka1 * Ka2;
+      fHA = (cH * cH)   / D;
+      fA1 = (cH * Ka1)  / D;
+      fA2 = (Ka1 * Ka2) / D;
+    } else {
+      fHA = cH   / (cH + Ka1);
+      fA1 = Ka1  / (cH + Ka1);
+    }
+    // 40 slots for the interesting acid/base species, 7 Na+, rest H2O
+    const ACID_SLOTS = 40;
+    const haN  = Math.round(fHA * ACID_SLOTS);
+    const a1N  = Math.round(fA1 * ACID_SLOTS);
+    const a2N  = Math.round(fA2 * ACID_SLOTS);
+    const usedA = haN + a1N + a2N;
+    const h2oN  = N_PARTICLES - usedA - 7;
+
+    out[state.ka2 ? 'H2A' : 'HA'] = haN;
+    out[state.ka2 ? 'HA-' : 'A-'] = a1N;
+    if (state.ka2) out['A2-'] = a2N;
+    out['H2O'] = Math.max(1, h2oN);
+    out['Na+']  = 7;
+    return out;
+  }
+
+  // SA_WB
+  const cH  = Math.pow(10, -pH);
+  const Ka  = 1e-14 / state.kb;
+  const fBH = cH  / (cH + Ka);
+  const fB  = Ka  / (cH + Ka);
+  const ACID_SLOTS = 40;
+  const bhN  = Math.round(fBH * ACID_SLOTS);
+  const bN   = Math.round(fB  * ACID_SLOTS);
+  const usedA = bhN + bN;
+  const h2oN  = N_PARTICLES - usedA - 7;
+
+  out['BH+'] = bhN;
+  out['B']   = bN;
+  out['H2O'] = Math.max(1, h2oN);
+  out['Cl-'] = 7;
+  return out;
+}
+
+// ── Spawn / transmute ────────────────────────────────────────────────────────
+// prevCounts tracks what we TOLD the array to be, as rounded integers.
+// We diff against that, not against particles[i].type, so accumulated
+// floating-point fractions fire correctly across drops.
+let prevCounts = null;
+
+function spawnParticles() {
+  const W = beakerCanvas.width;
+  const pH = state.dataPoints.length
+    ? state.dataPoints[state.dataPoints.length - 1].pH
+    : calculatePH(0);
+
+  const targets = targetCounts(pH);
+
+  // Round to integers, ensuring total == N_PARTICLES
+  const rounded = {};
+  let total = 0;
+  for (const [t, v] of Object.entries(targets)) {
+    rounded[t] = Math.max(0, Math.round(v));
+    total += rounded[t];
+  }
+  // Fix any rounding drift on the most abundant type
+  const drift = N_PARTICLES - total;
+  if (drift !== 0) {
+    const top = Object.keys(rounded).reduce((a, b) => rounded[a] >= rounded[b] ? a : b);
+    rounded[top] = Math.max(0, rounded[top] + drift);
+  }
+
+  // ── Cold start ─────────────────────────────────────────────────────────────
+  if (particles.length === 0) {
+    prevCounts = rounded;
+    const flat = [];
+    for (const [t, n] of Object.entries(rounded)) for (let i = 0; i < n; i++) flat.push(t);
+    // Shuffle
+    for (let i = flat.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [flat[i], flat[j]] = [flat[j], flat[i]];
+    }
+    for (let i = 0; i < N_PARTICLES; i++) {
+      particles.push({
+        x: 24 + Math.random() * (W - 48),
+        y: 38 + Math.random() * (beakerCanvas.height - 60),
+        vx: (Math.random() - 0.5) * 0.6,
+        vy: (Math.random() - 0.5) * 0.6,
+        r: 5 + Math.random() * 3,
+        type: flat[i] || 'H2O',
+        label: flat[i] || 'H2O',
+        alpha: 0.8 + Math.random() * 0.2,
+        reacting: 0,
+      });
+    }
+    return;
+  }
+
+  // ── Hot update: diff prevCounts → rounded ──────────────────────────────────
+  const prev = prevCounts || rounded;
+  prevCounts = rounded;
+
+  const surplus = {}, deficit = {};
+  const allTypes = new Set([...Object.keys(prev), ...Object.keys(rounded)]);
+  for (const t of allTypes) {
+    const delta = (rounded[t] || 0) - (prev[t] || 0);
+    if (delta < 0) surplus[t] = -delta;
+    else if (delta > 0) deficit[t] = delta;
+  }
+
+  // Collect exactly the surplus particles (spatially random)
+  const reactants = [];
+  const surplusLeft = { ...surplus };
+  for (const p of particles) {
+    if ((surplusLeft[p.type] || 0) > 0) {
+      reactants.push(p);
+      surplusLeft[p.type]--;
+    }
+  }
+  for (let i = reactants.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [reactants[i], reactants[j]] = [reactants[j], reactants[i]];
+  }
+
+  // Build product list
+  const products = [];
+  for (const [t, n] of Object.entries(deficit)) for (let i = 0; i < n; i++) products.push(t);
+  for (let i = products.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [products[i], products[j]] = [products[j], products[i]];
+  }
+
+  // Transmute only the reacting particles; flash them
+  const n = Math.min(reactants.length, products.length);
+  for (let i = 0; i < n; i++) {
+    reactants[i].type     = products[i];
+    reactants[i].label    = products[i];
+    reactants[i].reacting = 22;
+  }
+}
+
+// ── Colors ───────────────────────────────────────────────────────────────────
 function getParticleColor(type) {
   const colors = {
     'H+':  '#cc0000',
     'OH-': '#006699',
     'HA':  '#cc6600',
     'A-':  '#333399',
+    'H2A': '#cc6600',
+    'HA-': '#6633aa',
+    'A2-': '#333399',
     'B':   '#660066',
     'BH+': '#ff6600',
     'H2O': '#99ccff',
@@ -475,63 +650,16 @@ function getParticleColor(type) {
   return colors[type] || '#aaaaaa';
 }
 
-function spawnParticles() {
-  const W = beakerCanvas.width;
-  const pH = state.dataPoints.length
-    ? state.dataPoints[state.dataPoints.length - 1].pH
-    : calculatePH(0);
-
-  const types = getParticleTypes(pH);
-
-  if (particles.length === 0) {
-    for (let i = 0; i < 55; i++) {
-      const type = types[Math.floor(Math.random() * types.length)];
-      particles.push({
-        x: 20 + Math.random() * (W - 40),
-        y: 60 + Math.random() * 150,
-        vx: (Math.random() - 0.5) * 0.6,
-        vy: (Math.random() - 0.5) * 0.6,
-        r: 5 + Math.random() * 3,
-        type,
-        label: type,
-        alpha: 0.8 + Math.random() * 0.2,
-      });
-    }
-  } else {
-    // Only update types, keep positions/velocities intact for smooth transitions
-    for (let i = 0; i < particles.length; i++) {
-      const type = types[i % types.length];
-      particles[i].type = type;
-      particles[i].label = type;
-    }
-    // Optional: shuffle array so they don't uniformly switch in order
-    for (let i = particles.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const tempType = particles[i].type;
-      particles[i].type = particles[j].type;
-      particles[i].label = particles[j].type;
-      particles[j].type = tempType;
-      particles[j].label = tempType;
-    }
-  }
-}
-
-function getParticleTypes(pH) {
-  if (state.type === 'SA_SB') {
-    if (pH < 6.5) return ['H+', 'H+', 'H+', 'H2O', 'Cl-', 'Na+'];
-    if (pH > 7.5) return ['OH-', 'OH-', 'OH-', 'H2O', 'Cl-', 'Na+'];
-    return ['H2O', 'H2O', 'H2O', 'Cl-', 'Na+'];
-  }
-  if (state.type === 'WA_SB') {
-    if (pH < 4) return ['H+', 'HA', 'HA', 'HA', 'H2O'];
-    if (pH < 7) return ['HA', 'HA', 'A-', 'A-', 'H2O', 'Na+'];
-    if (pH < 8) return ['A-', 'A-', 'A-', 'OH-', 'H2O'];
-    return ['A-', 'OH-', 'OH-', 'H2O', 'Na+'];
-  }
-  if (pH > 10) return ['B', 'B', 'B', 'OH-', 'H2O'];
-  if (pH > 7)  return ['B', 'B', 'BH+', 'H2O', 'Cl-'];
-  if (pH > 4)  return ['BH+', 'BH+', 'B', 'H2O', 'Cl-', 'H+'];
-  return ['BH+', 'BH+', 'H+', 'H2O', 'Cl-'];
+// ── Draw ─────────────────────────────────────────────────────────────────────
+function pHtoColor(pH, alpha = 1) {
+  if (pH < 3)  return `rgba(204, 0, 0, ${alpha})`;
+  if (pH < 5)  return `rgba(204, 102, 0, ${alpha})`;
+  if (pH < 6)  return `rgba(204, 204, 0, ${alpha})`;
+  if (pH < 7)  return `rgba(153, 204, 51, ${alpha})`;
+  if (pH < 8)  return `rgba(51, 153, 51, ${alpha})`;
+  if (pH < 9)  return `rgba(0, 102, 153, ${alpha})`;
+  if (pH < 11) return `rgba(51, 51, 153, ${alpha})`;
+  return `rgba(102, 0, 102, ${alpha})`;
 }
 
 function drawBeaker() {
@@ -548,11 +676,12 @@ function drawBeaker() {
   const pH = state.dataPoints.length
     ? state.dataPoints[state.dataPoints.length - 1].pH
     : calculatePH(0);
-  const solutionColor = pHtoColor(pH, 0.2);
 
-  ctx.fillStyle = solutionColor;
+  // Solution tint
+  ctx.fillStyle = pHtoColor(pH, 0.2);
   ctx.fillRect(bx + 2, by + 2, bw - 4, bh - 4);
 
+  // Beaker walls — U-shape, no spout
   ctx.strokeStyle = dark ? '#aaaaaa' : '#222222';
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -562,22 +691,27 @@ function drawBeaker() {
   ctx.lineTo(bx + bw, by);
   ctx.stroke();
 
+  // Rim flush with wall tops
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(bx - 6, by);
-  ctx.lineTo(bx + bw + 6, by);
+  ctx.moveTo(bx, by);
+  ctx.lineTo(bx + bw, by);
   ctx.stroke();
 
-  ctx.beginPath();
-  ctx.moveTo(bx + bw, by - 2);
-  ctx.lineTo(bx + bw + 10, by - 10);
-  ctx.stroke();
-
-  if (!state.particleMode) {
-    return;
-  }
+  if (!state.particleMode) return;
 
   particles.forEach(p => {
+    // Reaction flash halo
+    if (p.reacting > 0) {
+      const fa = p.reacting / 22;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r + 4, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 255, 160, ${fa})`;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      p.reacting--;
+    }
+
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
     ctx.fillStyle = getParticleColor(p.type);
@@ -595,30 +729,18 @@ function drawBeaker() {
   });
 }
 
-function pHtoColor(pH, alpha = 1) {
-  if (pH < 3)  return `rgba(204, 0, 0, ${alpha})`;
-  if (pH < 5)  return `rgba(204, 102, 0, ${alpha})`;
-  if (pH < 6)  return `rgba(204, 204, 0, ${alpha})`;
-  if (pH < 7)  return `rgba(153, 204, 51, ${alpha})`;
-  if (pH < 8)  return `rgba(51, 153, 51, ${alpha})`;
-  if (pH < 9)  return `rgba(0, 102, 153, ${alpha})`;
-  if (pH < 11) return `rgba(51, 51, 153, ${alpha})`;
-  return `rgba(102, 0, 102, ${alpha})`;
-}
-
 function runBeakerAnimation() {
   function tick() {
     particles.forEach(p => {
       p.x += p.vx;
       p.y += p.vy;
       if (p.x < 20 || p.x > beakerCanvas.width - 20) p.vx *= -1;
-      if (p.y < 35 || p.y > beakerCanvas.height - 60) p.vy *= -1;
+      if (p.y < 35 || p.y > beakerCanvas.height - 22) p.vy *= -1;
       p.vx += (Math.random() - 0.5) * 0.04;
       p.vy += (Math.random() - 0.5) * 0.04;
       p.vx = Math.max(-0.8, Math.min(0.8, p.vx));
       p.vy = Math.max(-0.8, Math.min(0.8, p.vy));
     });
-
     drawBeaker();
     animFrame = requestAnimationFrame(tick);
   }
@@ -747,6 +869,7 @@ function resetTitration() {
   updateDataPanel(0);
   document.getElementById('dp-ph').textContent = '-';
   particles.length = 0;
+  prevCounts = null;
   spawnParticles();
 }
 
@@ -1453,6 +1576,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('kb-group').style.display = state.type === 'SA_WB' ? '' : 'none';
 
       particles.length = 0;
+      prevCounts = null;
       resetTitration();
     });
   });

@@ -820,3 +820,14 @@ input[type="range"] {
   #main-nav { flex-wrap: wrap; }
   .buffer-sim, .phka-visuals { flex-direction: column; }
 }
+
+.beaker-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.beaker-wrapper {
+  display: flex;
+  justify-content: center;
+}
