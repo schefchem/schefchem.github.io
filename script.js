@@ -1,1338 +1,1474 @@
-const unitContainer = document.getElementById("unitContainer");
-const tabs = Array.from(document.querySelectorAll(".tab"));
-const progressBadge = document.getElementById("progressBadge");
-const darkModeToggle = document.getElementById("darkModeToggle");
+/* ============================================================
+   SchefChem - Unit 8: Acids & Bases
+   script.js - All interactive logic
+   ============================================================ */
 
+'use strict';
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+function navigateTo(sectionId) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+
+  const target = document.getElementById('section-' + sectionId);
+  const btn = document.querySelector(`[data-section="${sectionId}"]`);
+  if (target) target.classList.add('active');
+  if (btn) btn.classList.add('active');
+
+  // Init subsystems on first visit
+  if (sectionId === 'buffers' && !bufferInitialized) initBuffer();
+  if (sectionId === 'ph-pka' && !phkaInitialized) initPhKa();
+}
+
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => navigateTo(btn.dataset.section));
+});
+
+// ============================================================
+// THEME TOGGLE
+// ============================================================
+const themeToggle = document.getElementById('theme-toggle');
+let isDark = false;
+themeToggle.addEventListener('click', () => {
+  isDark = !isDark;
+  document.body.dataset.theme = isDark ? 'dark' : 'light';
+  themeToggle.textContent = isDark ? 'Light Mode' : 'Dark Mode';
+  drawGraph();
+  drawBeaker();
+  if (bufferInitialized) drawBufferGraph();
+  if (phkaInitialized) drawPhKaGraph(), drawPie();
+});
+
+// ============================================================
+// TOAST NOTIFICATION
+// ============================================================
+function showToast(msg, duration = 2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+// ============================================================
+// TITRATION STATE
+// ============================================================
 const state = {
-  activeUnit: "unit1",
-  completedUnits: JSON.parse(localStorage.getItem("schefchem-completed") || "[]"),
-  darkMode: localStorage.getItem("schefchem-dark") === "1",
-};
-const PHENOLPHTHALEIN_PINK_START_PH = 8.2;
-const PHENOLPHTHALEIN_PINK = "rgba(255, 100, 150, 0.45)";
-const SOLUTION_BLUE = "rgba(100, 180, 255, 0.33)";
-const PARTICLE_CONCENTRATION_SCALE = 8;
-const MIN_PARTICLE_COUNT = 22;
-
-if (state.darkMode) document.body.classList.add("dark");
-
-const quizzes = {
-  unit1: {
-    q: "Across period 2, atomic radius generally...",
-    options: ["Increases", "Decreases", "Stays constant"],
-    answer: 1,
-    explain: "Effective nuclear charge increases left to right, pulling electrons closer.",
-  },
-  unit2: {
-    q: "Ionic compounds are held together mainly by...",
-    options: ["Dispersion forces", "Electrostatic attraction", "Hydrogen bonding"],
-    answer: 1,
-    explain: "Opposite charges attract strongly in ionic lattices.",
-  },
-  unit3: {
-    q: "The strongest common IMF between neutral molecules is...",
-    options: ["London dispersion", "Dipole-dipole", "Hydrogen bonding"],
-    answer: 2,
-    explain: "Hydrogen bonding is a strong, directional dipole interaction.",
-  },
-  unit4: {
-    q: "In a net ionic equation, spectator ions are...",
-    options: ["Retained", "Cancelled", "Converted into precipitate"],
-    answer: 1,
-    explain: "Spectator ions appear unchanged on both sides and are cancelled.",
-  },
-  unit5: {
-    q: "Increasing reactant concentration usually makes rate...",
-    options: ["Slower", "Faster", "Unchanged"],
-    answer: 1,
-    explain: "More collisions per second increases effective collision frequency.",
-  },
-  unit6: {
-    q: "A reaction is spontaneous when ΔG is...",
-    options: ["Positive", "Zero", "Negative"],
-    answer: 2,
-    explain: "Negative Gibbs free energy indicates thermodynamic favorability.",
-  },
-  unit7: {
-    q: "If product concentration increases, equilibrium shifts...",
-    options: ["Left", "Right", "No change"],
-    answer: 0,
-    explain: "Le Châtelier: system shifts to consume added product.",
-  },
-  unit8: {
-    q: "At half-equivalence in WA/SB titration, pH equals...",
-    options: ["7", "pKa", "pKb"],
-    answer: 1,
-    explain: "When [HA]=[A−], Henderson–Hasselbalch gives pH = pKa.",
-  },
-  unit9: {
-    q: "In Nernst equation, increasing product/reactant ratio makes E...",
-    options: ["Decrease", "Increase", "Unchanged"],
-    answer: 0,
-    explain: "Larger Q lowers E from E° for spontaneous galvanic cells.",
-  },
+  type: 'SA_SB',   // SA_SB | WA_SB | SA_WB
+  analyteVol: 25,   // mL
+  analyteConc: 0.1, // M
+  titrantConc: 0.1, // M
+  ka: 1.8e-5,
+  ka2: null,        // Support for diprotic acids
+  kb: 1.8e-5,
+  volAdded: 0,      // mL
+  dataPoints: [],   // [{vol, pH}]
+  autoInterval: null,
+  particleMode: true
 };
 
-const units = {
-  unit1: {
-    title: "Atomic Structure & Properties",
-    subtitle: "Visualize periodic trends and build intuition for electron behavior.",
-    render: renderUnit1,
-  },
-  unit2: {
-    title: "Molecular & Ionic Compound Structure",
-    subtitle: "Compare bonding models and how structure controls properties.",
-    render: renderUnit2,
-  },
-  unit3: {
-    title: "Intermolecular Forces & Properties",
-    subtitle: "Explore IMF strength and how it affects phase and boiling behavior.",
-    render: renderUnit3,
-  },
-  unit4: {
-    title: "Chemical Reactions",
-    subtitle: "Classify reactions and observe ionic-level changes.",
-    render: renderUnit4,
-  },
-  unit5: {
-    title: "Kinetics",
-    subtitle: "Model how concentration and temperature shape reaction rate.",
-    render: renderUnit5,
-  },
-  unit6: {
-    title: "Thermodynamics",
-    subtitle: "Connect ΔH, ΔS, and temperature to spontaneity.",
-    render: renderUnit6,
-  },
-  unit7: {
-    title: "Equilibrium",
-    subtitle: "Apply Le Châtelier's principle through dynamic concentration shifts.",
-    render: renderUnit7,
-  },
-  unit8: {
-    title: "Acids & Bases — Advanced Titration Lab",
-    subtitle: "High-detail simulation for SA/SB, WA/SB, and SA/WB titrations.",
-    render: renderUnit8,
-  },
-  unit9: {
-    title: "Applications of Thermodynamics",
-    subtitle: "Relate electrochemistry and free energy in real systems.",
-    render: renderUnit9,
-  },
-};
-
-function updateProgressBadge() {
-  const unique = new Set(state.completedUnits);
-  progressBadge.textContent = `${unique.size} / 9 complete`;
-  localStorage.setItem("schefchem-completed", JSON.stringify(Array.from(unique)));
-}
-
-function markUnitComplete(unit) {
-  if (!state.completedUnits.includes(unit)) state.completedUnits.push(unit);
-  updateProgressBadge();
-}
-
-function attachQuiz(unitId) {
-  const quiz = quizzes[unitId];
-  const template = document.getElementById("quizTemplate");
-  const node = template.content.cloneNode(true);
-  node.querySelector(".quiz-question").textContent = quiz.q;
-  const options = node.querySelector(".quiz-options");
-  const feedback = node.querySelector(".quiz-feedback");
-  quiz.options.forEach((label, i) => {
-    const btn = document.createElement("button");
-    btn.textContent = label;
-    btn.addEventListener("click", () => {
-      if (i === quiz.answer) {
-        feedback.textContent = `✅ Correct. ${quiz.explain}`;
-        feedback.style.color = "var(--ok)";
-        markUnitComplete(unitId);
-      } else {
-        feedback.textContent = "❌ Try again and focus on the conceptual trend.";
-        feedback.style.color = "var(--danger)";
-      }
-    });
-    options.appendChild(btn);
-  });
-  unitContainer.appendChild(node);
-}
-
-function setActiveTab(unitId) {
-  state.activeUnit = unitId;
-  tabs.forEach((t) => t.classList.toggle("active", t.dataset.unit === unitId));
-  renderUnit(unitId);
-}
-
-function renderUnit(unitId) {
-  const unit = units[unitId];
-  unitContainer.classList.remove("fade-in");
-  void unitContainer.offsetWidth;
-  unitContainer.classList.add("fade-in");
-  unitContainer.innerHTML = `
-    <section class="unit-header">
-      <h2>${unit.title}</h2>
-      <p>${unit.subtitle}</p>
-    </section>
-  `;
-  unit.render();
-  attachQuiz(unitId);
-}
-
-function unitCard(html) {
-  const section = document.createElement("section");
-  section.className = "card";
-  section.innerHTML = html;
-  return section;
-}
-
-function fmtExp(v) {
-  if (!isFinite(v)) return "—";
-  if (v === 0) return "0";
-  if (Math.abs(v) >= 0.01 && Math.abs(v) < 1000) return v.toFixed(4);
-  return v.toExponential(3);
-}
-
-function calcPFromK(kValue) {
-  return -Math.log10(Math.max(1e-30, kValue));
-}
-
-function clamp(v, min, max) {
-  return Math.min(max, Math.max(min, v));
-}
-
-function validateNumberInput(value, { min = 0, max = Infinity }) {
-  const n = Number(value);
-  return Number.isFinite(n) && n >= min && n <= max;
-}
-
-function drawSimpleBar(canvas, fraction, color = "#2f7ef7", label = "") {
-  const ctx = canvas.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  ctx.scale(dpr, dpr);
-
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "rgba(128,128,128,0.15)";
-  ctx.fillRect(20, h / 2 - 12, w - 40, 24);
+// ============================================================
+// HELPER: DRAW ARROW
+// ============================================================
+function drawDownArrow(ctx, x, y, color) {
   ctx.fillStyle = color;
-  ctx.fillRect(20, h / 2 - 12, (w - 40) * clamp(fraction, 0, 1), 24);
-  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--text");
-  ctx.font = "14px sans-serif";
-  ctx.fillText(label, 20, h / 2 - 18);
-}
-
-function drawLineGraph(canvas, points, { xMax, yMax = 14, yMin = 0, highlight = null }) {
-  const ctx = canvas.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, w, h);
-
-  const m = { l: 45, r: 12, t: 15, b: 34 };
-  const plotW = w - m.l - m.r;
-  const plotH = h - m.t - m.b;
-
-  const xMaxSafe = xMax > 0 ? xMax : 1;
-  const toX = (x) => m.l + (x / xMaxSafe) * plotW;
-  const toY = (y) => m.t + ((yMax - y) / (yMax - yMin)) * plotH;
-
-  if (highlight) {
-    ctx.fillStyle = "rgba(31, 187, 166, 0.16)";
-    const x1 = toX(clamp(highlight.start, 0, xMax));
-    const x2 = toX(clamp(highlight.end, 0, xMax));
-    ctx.fillRect(x1, m.t, Math.max(0, x2 - x1), plotH);
-  }
-
-  ctx.strokeStyle = "rgba(120,120,120,0.45)";
-  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(m.l, m.t);
-  ctx.lineTo(m.l, h - m.b);
-  ctx.lineTo(w - m.r, h - m.b);
-  ctx.stroke();
-
-  ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--text");
-  ctx.font = "12px sans-serif";
-  for (let i = 0; i <= 7; i++) {
-    const y = i * 2;
-    const py = toY(y);
-    ctx.fillText(String(y), 8, py + 4);
-    ctx.strokeStyle = "rgba(120,120,120,0.12)";
-    ctx.beginPath();
-    ctx.moveTo(m.l, py);
-    ctx.lineTo(w - m.r, py);
-    ctx.stroke();
-  }
-
-  ctx.fillText("Volume Added (mL)", w / 2 - 45, h - 7);
-  ctx.save();
-  ctx.translate(12, h / 2 + 25);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText("pH", 0, 0);
-  ctx.restore();
-
-  if (!points.length) return;
-  ctx.strokeStyle = "#2f7ef7";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  points.forEach((pt, i) => {
-    const x = toX(pt.x);
-    const y = toY(pt.y);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  const last = points[points.length - 1];
-  ctx.fillStyle = "#cf3f5e";
-  ctx.beginPath();
-  ctx.arc(toX(last.x), toY(last.y), 4, 0, Math.PI * 2);
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - 6, y - 10);
+  ctx.lineTo(x + 6, y - 10);
+  ctx.closePath();
   ctx.fill();
 }
 
-function renderUnit1() {
-  const layout = document.createElement("div");
-  layout.className = "layout-2";
-  layout.append(
-    unitCard(`
-      <h3>Atomic Radius Trends</h3>
-      <label for="trendMode">Trend direction</label>
-      <select id="trendMode">
-        <option value="period">Across a period</option>
-        <option value="group">Down a group</option>
-      </select>
-      <label for="positionSlider">Position</label>
-      <input id="positionSlider" type="range" min="1" max="8" value="1" />
-      <p id="radiusReadout" class="notice"></p>
-      <div class="canvas-wrap"><canvas id="radiusCanvas" height="220"></canvas></div>
-      <p class="small-note">Visual cue: left→right shrinks radius, top→bottom expands radius.</p>
-    `),
-    unitCard(`
-      <h3>Concept Link</h3>
-      <p>Radius is controlled by <strong>effective nuclear charge</strong> and electron shell distance.</p>
-      <div class="kpi">
-        <div><strong>Across period:</strong> Zeff increases</div>
-        <div><strong>Down group:</strong> shells increase</div>
-        <div><strong>Coulomb pull:</strong> stronger with Zeff</div>
-        <div><strong>Shielding:</strong> stronger with inner electrons</div>
-      </div>
-    `)
-  );
-  unitContainer.appendChild(layout);
+// ============================================================
+// CHEMISTRY CALCULATIONS
+// ============================================================
 
-  const trendMode = document.getElementById("trendMode");
-  const slider = document.getElementById("positionSlider");
-  const readout = document.getElementById("radiusReadout");
-  const canvas = document.getElementById("radiusCanvas");
+function calcSA_SB_pH(mmolAcid, mmolBase, totalVol) {
+  const netMmol = mmolAcid - mmolBase;
+  if (Math.abs(netMmol) < 1e-10) return 7.0;
 
-  function draw() {
-    const isPeriod = trendMode.value === "period";
-    const pos = Number(slider.value);
-    const ctx = canvas.getContext("2d");
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, w, h);
+  if (netMmol > 0) {
+    return -Math.log10(netMmol / totalVol);
+  } else {
+    const cOH = Math.abs(netMmol) / totalVol;
+    const pOH = -Math.log10(cOH);
+    return 14 - pOH;
+  }
+}
 
-    for (let i = 1; i <= 8; i++) {
-      const x = 50 + (i - 1) * ((w - 100) / 7);
-      const base = isPeriod ? 40 - i * 3 : 12 + i * 4;
-      const r = clamp(base, 10, 42);
-      ctx.beginPath();
-      ctx.fillStyle = i === pos ? "#2f7ef7" : "rgba(47,126,247,0.25)";
-      ctx.arc(x, h / 2, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--text");
-      ctx.font = "12px sans-serif";
-      ctx.fillText(String(i), x - 3, h / 2 + 4);
-    }
+function calcWA_SB_pH(mmolAcid, mmolBase, totalVol, Ka1, Ka2) {
+  const C_weak = mmolAcid / totalVol;
+  const pKa1 = -Math.log10(Ka1);
 
-    if (isPeriod) {
-      readout.textContent = `Position ${pos}: radius decreases as proton pull dominates across the period.`;
+  if (!Ka2) {
+    if (mmolBase >= mmolAcid) {
+      const excessOH = (mmolBase - mmolAcid) / totalVol;
+      const weakBaseOH = Math.sqrt((1e-14 / Ka1) * C_weak);
+      return 14 + Math.log10(excessOH + weakBaseOH);
     } else {
-      readout.textContent = `Position ${pos}: radius increases as atoms gain new electron shells down the group.`;
+      const cA = (mmolAcid - mmolBase) / totalVol;
+      const cB = mmolBase / totalVol;
+      let R = cB / (cA || 1e-10); 
+      const R_min = Math.sqrt(Ka1 / C_weak);
+      const R_max = Math.sqrt(C_weak * Ka1 / 1e-14);
+      R = Math.max(R_min, Math.min(R_max, R));
+      return pKa1 + Math.log10(R);
+    }
+  } else {
+    const pKa2 = -Math.log10(Ka2);
+    if (mmolBase < mmolAcid) {
+      const cA = (mmolAcid - mmolBase) / totalVol;
+      const cB = mmolBase / totalVol;
+      let R = cB / (cA || 1e-10);
+      const R_min = Math.sqrt(Ka1 / C_weak);
+      const R_max = Math.sqrt(Ka1 / Ka2);
+      R = Math.max(R_min, Math.min(R_max, R));
+      return pKa1 + Math.log10(R);
+    }
+    else if (mmolBase < 2 * mmolAcid) {
+      const cA = (2 * mmolAcid - mmolBase) / totalVol;
+      const cB = (mmolBase - mmolAcid) / totalVol;
+      let R = cB / (cA || 1e-10);
+      const R_min = Math.sqrt(Ka2 / Ka1);
+      const R_max = Math.sqrt(C_weak * Ka2 / 1e-14);
+      R = Math.max(R_min, Math.min(R_max, R));
+      return pKa2 + Math.log10(R);
+    }
+    else {
+      const excessOH = (mmolBase - 2 * mmolAcid) / totalVol;
+      const weakBaseOH = Math.sqrt((1e-14 / Ka2) * C_weak);
+      return 14 + Math.log10(excessOH + weakBaseOH);
+    }
+  }
+}
+
+function calcSA_WB_pH(mmolBase, mmolAcid, totalVol, Kb) {
+  const C_weak = mmolBase / totalVol;
+  const Ka_conj = 1e-14 / Kb;
+  const pKa = -Math.log10(Ka_conj);
+
+  if (mmolAcid >= mmolBase) {
+    const excessH = (mmolAcid - mmolBase) / totalVol;
+    const weakAcidH = Math.sqrt(Ka_conj * C_weak);
+    return -Math.log10(excessH + weakAcidH);
+  } else {
+    const cB = (mmolBase - mmolAcid) / totalVol;
+    const cBH = mmolAcid / totalVol;
+    let R = cB / (cBH || 1e-10);
+    const R_min = Math.sqrt(Ka_conj / C_weak);
+    const R_max = Math.sqrt(C_weak / Kb);
+    R = Math.max(R_min, Math.min(R_max, R));
+    return pKa + Math.log10(R);
+  }
+}
+
+function calculatePH(volAddedML) {
+  const Va = state.analyteVol;
+  const Ca = state.analyteConc;
+  const Ct = state.titrantConc;
+  const totalVol = Va + volAddedML;
+  const mmolAnalyte = Va * Ca;
+  const mmolTitrant = volAddedML * Ct;
+
+  let pH;
+  switch (state.type) {
+    case 'SA_SB':
+      pH = calcSA_SB_pH(mmolAnalyte, mmolTitrant, totalVol);
+      break;
+    case 'WA_SB':
+      pH = calcWA_SB_pH(mmolAnalyte, mmolTitrant, totalVol, state.ka, state.ka2);
+      break;
+    case 'SA_WB':
+      pH = calcSA_WB_pH(mmolAnalyte, mmolTitrant, totalVol, state.kb);
+      break;
+  }
+  return Math.max(0, Math.min(14, pH));
+}
+
+function equivalencePointVol() {
+  const Va = state.analyteVol;
+  const Ca = state.analyteConc;
+  const Ct = state.titrantConc;
+  return (Va * Ca) / Ct;
+}
+
+function getCurrentPKa() {
+  if (state.type === 'WA_SB') return -Math.log10(state.ka);
+  if (state.type === 'SA_WB') return -Math.log10(1e-14 / state.kb);
+  return null;
+}
+
+function getSpecies(volAddedML) {
+  const Va = state.analyteVol;
+  const Ca = state.analyteConc;
+  const Ct = state.titrantConc;
+  const totalVol = Va + volAddedML;
+  const mmolAnal = Va * Ca;
+  const mmolTit  = volAddedML * Ct;
+  const pH = calculatePH(volAddedML);
+  const cH  = Math.pow(10, -pH);
+  const cOH = 1e-14 / cH;
+  const species = [
+    { name: '[H+]',  val: cH },
+    { name: '[OH-]', val: cOH },
+  ];
+
+  if (state.type === 'WA_SB' && !state.ka2) {
+    const mmolHA = Math.max(0, mmolAnal - mmolTit);
+    const mmolA  = Math.max(0, mmolTit - Math.max(0, mmolTit - mmolAnal));
+    const cHA = mmolHA / totalVol;
+    const cA  = Math.min(mmolTit, mmolAnal) / totalVol;
+    species.push({ name: '[HA]', val: cHA });
+    species.push({ name: '[A-]', val: cA });
+  } else if (state.type === 'SA_WB') {
+    const mmolB  = Math.max(0, mmolAnal - mmolTit);
+    const mmolBH = Math.min(mmolTit, mmolAnal);
+    species.push({ name: '[B]',   val: mmolB / totalVol });
+    species.push({ name: '[BH+]', val: mmolBH / totalVol });
+  }
+
+  return species;
+}
+
+function getHHValues(volAddedML) {
+  if (state.ka2) return null; 
+  const Va = state.analyteVol;
+  const Ca = state.analyteConc;
+  const Ct = state.titrantConc;
+  const mmolAnal = Va * Ca;
+  const mmolTit  = volAddedML * Ct;
+  const pKa = getCurrentPKa();
+  if (!pKa) return null;
+
+  const mmolConj = Math.min(mmolTit, mmolAnal);
+  const mmolAcid = Math.max(0, mmolAnal - mmolTit);
+
+  if (mmolAcid <= 0 || mmolConj <= 0) return null;
+
+  const ratio = mmolConj / mmolAcid;
+  const logRatio = Math.log10(ratio);
+  const calcPH = pKa + logRatio;
+
+  return {
+    pKa: pKa.toFixed(2),
+    ratio: ratio.toFixed(3),
+    logRatio: logRatio.toFixed(3),
+    calcPH: calcPH.toFixed(2),
+  };
+}
+
+// ============================================================
+// STEP-BY-STEP EXPLANATIONS
+// ============================================================
+function generateExplanation(volAddedML) {
+  const ep = equivalencePointVol();
+  const hep = ep / 2;
+  const pH = calculatePH(volAddedML);
+  const pKa = getCurrentPKa();
+
+  if (volAddedML === 0) {
+    if (state.type === 'SA_SB') {
+      return `<b>Start:</b> Pure strong acid at ${state.analyteConc} M. Fully dissociated, so [H+] = ${state.analyteConc} M. pH = ${(-Math.log10(state.analyteConc)).toFixed(2)}.`;
+    } else if (state.type === 'WA_SB') {
+      if (state.ka2) return `<b>Start:</b> Polyprotic weak acid (Ka1 = ${state.ka.toExponential(2)}, Ka2 = ${state.ka2.toExponential(2)}). Current pH = ${pH.toFixed(2)}.`;
+      return `<b>Start:</b> Weak acid (Ka = ${state.ka.toExponential(2)}). Partially dissociates. Use Ka = [H+][A-]/[HA] to find [H+], giving pH = ${pH.toFixed(2)}.`;
+    } else {
+      return `<b>Start:</b> Weak base (Kb = ${state.kb.toExponential(2)}). Partially accepts protons from water. Current pH = ${pH.toFixed(2)}.`;
     }
   }
 
-  trendMode.addEventListener("change", draw);
-  slider.addEventListener("input", draw);
-  draw();
-}
-
-function renderUnit2() {
-  const layout = document.createElement("div");
-  layout.className = "layout-2";
-  layout.append(
-    unitCard(`
-      <h3>Bonding Model Explorer</h3>
-      <label for="bondType">Structure type</label>
-      <select id="bondType">
-        <option value="ionic">Ionic Lattice</option>
-        <option value="molecular">Molecular Covalent</option>
-        <option value="network">Network Covalent</option>
-      </select>
-      <div class="canvas-wrap"><canvas id="bondCanvas" height="220"></canvas></div>
-      <p id="bondNote" class="notice"></p>
-    `),
-    unitCard(`
-      <h3>Property Contrast</h3>
-      <div class="kpi" id="bondKpi"></div>
-    `)
-  );
-  unitContainer.appendChild(layout);
-
-  const type = document.getElementById("bondType");
-  const canvas = document.getElementById("bondCanvas");
-  const note = document.getElementById("bondNote");
-  const kpi = document.getElementById("bondKpi");
-
-  function drawBond() {
-    const val = type.value;
-    const ctx = canvas.getContext("2d");
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, w, h);
-
-    const profiles = {
-      ionic: {
-        note: "Ionic solids form repeating lattices of alternating charges.",
-        kpi: ["High mp/bp", "Brittle", "Conducts when molten", "Water-soluble tendency"],
-      },
-      molecular: {
-        note: "Molecules are discrete units; IMFs dominate bulk behavior.",
-        kpi: ["Lower mp/bp", "Often soft/volatile", "Poor conductivity", "Shape-dependent polarity"],
-      },
-      network: {
-        note: "Covalent networks are giant bonded structures (e.g., diamond, SiO2).",
-        kpi: ["Very high mp", "Hard/rigid", "Usually non-conductive", "Directional bonding"],
-      },
-    };
-
-    if (val === "ionic") {
-      for (let r = 0; r < 4; r++) {
-        for (let c = 0; c < 8; c++) {
-          const x = 35 + c * 45;
-          const y = 35 + r * 45;
-          const plus = (r + c) % 2 === 0;
-          ctx.fillStyle = plus ? "#2f7ef7" : "#cf3f5e";
-          ctx.beginPath();
-          ctx.arc(x, y, 14, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = "#fff";
-          ctx.fillText(plus ? "+" : "−", x - 3, y + 4);
-        }
-      }
-    }
-    if (val === "molecular") {
-      for (let i = 0; i < 8; i++) {
-        const x = 50 + (i % 4) * 80;
-        const y = 50 + Math.floor(i / 4) * 95;
-        ctx.strokeStyle = "#6e84a4";
-        ctx.beginPath();
-        ctx.moveTo(x - 12, y);
-        ctx.lineTo(x + 12, y);
-        ctx.stroke();
-        ctx.fillStyle = "#44d1bd";
-        ctx.beginPath();
-        ctx.arc(x - 15, y, 9, 0, Math.PI * 2);
-        ctx.arc(x + 15, y, 9, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-    if (val === "network") {
-      ctx.strokeStyle = "#44d1bd";
-      for (let i = 0; i < 6; i++) {
-        for (let j = 0; j < 5; j++) {
-          const x = 35 + i * 60;
-          const y = 35 + j * 38;
-          if (i < 5) {
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-            ctx.lineTo(x + 60, y + 20);
-            ctx.stroke();
-          }
-          if (j < 4) {
-            ctx.beginPath();
-            ctx.moveTo(x, y);
-            ctx.lineTo(x, y + 38);
-            ctx.stroke();
-          }
-          ctx.fillStyle = "#2f7ef7";
-          ctx.beginPath();
-          ctx.arc(x, y, 5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    }
-
-    note.textContent = profiles[val].note;
-    kpi.innerHTML = profiles[val].kpi.map((x) => `<div>${x}</div>`).join("");
+  if (state.type === 'WA_SB' && state.ka2) {
+    if (volAddedML < ep - 0.5) return `<b>First Buffer Region:</b> Removing the first proton. pH is governed by Ka1. pH = ${pH.toFixed(2)}.`;
+    if (Math.abs(volAddedML - ep) < 0.6) return `<b>First Equivalence Point:</b> The first proton is completely neutralized. The solution now contains an amphiprotic species.`;
+    if (volAddedML < 2 * ep - 0.5) return `<b>Second Buffer Region:</b> Removing the second proton. pH is governed by Ka2. pH = ${pH.toFixed(2)}.`;
+    if (Math.abs(volAddedML - 2 * ep) < 0.6) return `<b>Second Equivalence Point:</b> Both protons fully neutralized. Hydrolysis of the fully deprotonated ion causes a basic pH.`;
+    return `<b>Past equivalence:</b> Excess strong base dominates. pH is controlled by excess [OH-]. pH = ${pH.toFixed(2)}.`;
   }
 
-  type.addEventListener("change", drawBond);
-  drawBond();
-}
-
-function renderUnit3() {
-  unitContainer.appendChild(
-    unitCard(`
-      <h3>IMF Strength Simulator</h3>
-      <div class="layout-2">
-        <div>
-          <label for="imfType">Molecule type</label>
-          <select id="imfType">
-            <option value="ldf">Nonpolar (LDF dominant)</option>
-            <option value="dipole">Polar (Dipole-dipole)</option>
-            <option value="hbond">Hydrogen-bonding</option>
-          </select>
-          <label for="imfTemp">Temperature (°C)</label>
-          <input id="imfTemp" type="range" min="-50" max="150" value="25" />
-          <p id="imfReadout" class="notice"></p>
-        </div>
-        <div>
-          <div class="canvas-wrap"><canvas id="imfCanvas" height="180"></canvas></div>
-          <p class="small-note">Higher IMF strength generally raises boiling point and reduces volatility.</p>
-        </div>
-      </div>
-    `)
-  );
-
-  const type = document.getElementById("imfType");
-  const temp = document.getElementById("imfTemp");
-  const readout = document.getElementById("imfReadout");
-  const canvas = document.getElementById("imfCanvas");
-
-  function update() {
-    const t = Number(temp.value);
-    const base = { ldf: 0.35, dipole: 0.6, hbond: 0.85 }[type.value];
-    const thermalDisruption = clamp((t + 50) / 200, 0, 1) * 0.55;
-    const effective = clamp(base - thermalDisruption + 0.15, 0, 1);
-    const phase = effective > 0.62 ? "More liquid-like" : effective > 0.35 ? "Mixed tendency" : "More gas-like";
-    readout.textContent = `IMF effectiveness: ${(effective * 100).toFixed(1)}% at ${t}°C → ${phase}`;
-    drawSimpleBar(canvas, effective, "#44d1bd", "Relative intermolecular attraction");
+  if (volAddedML < hep - 0.5) {
+    return `<b>Early buffer region:</b> Both HA and A- (or B and BH+) are present but unequal. pH governed by Henderson-Hasselbalch. More weak acid causes pH < pKa. Current pH = ${pH.toFixed(2)}.`;
   }
 
-  type.addEventListener("change", update);
-  temp.addEventListener("input", update);
-  update();
+  if (Math.abs(volAddedML - hep) < 0.6 && pKa) {
+    return `<b>Half-Equivalence Point:</b> You've added exactly half the titrant needed to reach equivalence. [HA] = [A-], so log([A-]/[HA]) = 0. <b>pH = pKa = ${pKa.toFixed(2)}</b>. This is the buffer midpoint.`;
+  }
+
+  if (volAddedML < ep - 0.5) {
+    return `<b>Buffer region:</b> Neutralization is ongoing. HA is converting to A-. pH = pKa + log([A-]/[HA]). pH = ${pH.toFixed(2)}.`;
+  }
+
+  if (Math.abs(volAddedML - ep) < 0.6) {
+    if (state.type === 'SA_SB') {
+      return `<b>Equivalence Point:</b> All acid has been neutralized. Solution contains only water and salt. pH = 7.00.`;
+    } else if (state.type === 'WA_SB') {
+      return `<b>Equivalence Point:</b> All weak acid is now its conjugate base (A-). A- hydrolyzes (A- + H2O <-> HA + OH-) creating a basic pH = ${pH.toFixed(2)}.`;
+    } else {
+      return `<b>Equivalence Point:</b> All weak base is now its conjugate acid (BH+). BH+ hydrolyzes creating an acidic pH = ${pH.toFixed(2)}.`;
+    }
+  }
+
+  return `<b>Past equivalence:</b> Excess ${state.type === 'SA_WB' ? 'strong acid' : 'strong base'} dominates. pH is controlled by excess [${state.type === 'SA_WB' ? 'H+' : 'OH-'}]. pH = ${pH.toFixed(2)}.`;
 }
 
-function renderUnit4() {
-  unitContainer.appendChild(
-    unitCard(`
-      <h3>Reaction Type + Net Ionic Explorer</h3>
-      <label for="rxnType">Select reaction</label>
-      <select id="rxnType">
-        <option value="precip">AgNO₃ + NaCl → AgCl(s) + NaNO₃</option>
-        <option value="acidbase">HCl + NaOH → NaCl + H₂O</option>
-        <option value="redox">Zn + CuSO₄ → ZnSO₄ + Cu</option>
-      </select>
-      <div class="layout-2">
-        <div>
-          <p id="rxnDetails" class="notice"></p>
-          <div class="legend" id="rxnLegend"></div>
-        </div>
-        <div class="canvas-wrap"><canvas id="rxnCanvas" height="190"></canvas></div>
-      </div>
-    `)
-  );
+// ============================================================
+// GRAPH RENDERING (Canvas)
+// ============================================================
+let graphCanvas, graphCtx;
 
-  const type = document.getElementById("rxnType");
-  const details = document.getElementById("rxnDetails");
-  const legend = document.getElementById("rxnLegend");
-  const canvas = document.getElementById("rxnCanvas");
+function initGraph() {
+  graphCanvas = document.getElementById('graph-canvas');
+  graphCtx = graphCanvas.getContext('2d');
+  drawGraph();
+}
 
-  function draw() {
-    const val = type.value;
-    const ctx = canvas.getContext("2d");
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, w, h);
+function drawGraph() {
+  if (!graphCtx) return;
+  const ctx = graphCtx;
+  const W = graphCanvas.width;
+  const H = graphCanvas.height;
+  const dark = isDark;
 
-    const profiles = {
-      precip: {
-        details: "Net ionic: Ag⁺ + Cl⁻ → AgCl(s). Insoluble solid forms and drops out.",
-        legend: ["Ag⁺", "Cl⁻", "AgCl(s) precipitate"],
-      },
-      acidbase: {
-        details: "Net ionic: H⁺ + OH⁻ → H₂O. Neutralization reduces free acid/base ions.",
-        legend: ["H⁺", "OH⁻", "H₂O"],
-      },
-      redox: {
-        details: "Zn is oxidized and Cu²⁺ is reduced; electrons transfer drives the reaction.",
-        legend: ["Zn(s)", "Cu²⁺", "Cu(s)"],
-      },
-    };
+  ctx.clearRect(0, 0, W, H);
 
-    if (val === "precip") {
-      for (let i = 0; i < 30; i++) {
-        const x = 18 + ((i * 31) % (w - 35));
-        const y = 22 + ((i * 17) % 90);
-        ctx.fillStyle = i % 2 ? "#2f7ef7" : "#44d1bd";
-        ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.fillStyle = "#c0c7d6";
-      for (let i = 0; i < 18; i++) {
-        const x = 30 + i * 16;
-        const y = 130 + (i % 4) * 8;
-        ctx.fillRect(x, y, 10, 6);
-      }
-    }
+  const PAD = { top: 20, right: 20, bottom: 40, left: 50 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
 
-    if (val === "acidbase") {
-      for (let i = 0; i < 36; i++) {
-        const x = 20 + ((i * 19) % (w - 40));
-        const y = 25 + ((i * 23) % (h - 60));
-        const acid = i % 2 === 0;
-        ctx.fillStyle = acid ? "#cf3f5e" : "#2f7ef7";
-        ctx.beginPath();
-        ctx.arc(x, y, 6, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.fillStyle = "#44d1bd";
-      for (let i = 0; i < 12; i++) {
-        const x = 30 + i * 24;
-        const y = 130 + (i % 3) * 9;
-        ctx.fillText("H₂O", x, y);
-      }
-    }
+  ctx.fillStyle = dark ? '#2b2b2b' : '#ffffff';
+  ctx.fillRect(0, 0, W, H);
 
-    if (val === "redox") {
-      ctx.fillStyle = "#8a8f98";
-      ctx.fillRect(20, 30, 45, 130);
-      ctx.fillStyle = "#a4632a";
-      for (let i = 0; i < 18; i++) {
-        const x = 180 + (i % 5) * 18;
-        const y = 40 + Math.floor(i / 5) * 25;
-        ctx.beginPath();
-        ctx.arc(x, y, 6, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.strokeStyle = "#44d1bd";
-      ctx.lineWidth = 2;
+  const ep = equivalencePointVol();
+  const maxVol = (state.type === 'WA_SB' && state.ka2) ? ep * 3.2 : ep * 2.2;
+
+  function toX(vol) { return PAD.left + (vol / maxVol) * plotW; }
+  function toY(pH)  { return PAD.top + plotH - (pH / 14) * plotH; }
+
+  ctx.strokeStyle = dark ? '#444444' : '#dddddd';
+  ctx.lineWidth = 1;
+  for (let pH = 0; pH <= 14; pH += 2) {
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, toY(pH));
+    ctx.lineTo(PAD.left + plotW, toY(pH));
+    ctx.stroke();
+  }
+  for (let v = 0; v <= maxVol; v += ep / 2) {
+    ctx.beginPath();
+    ctx.moveTo(toX(v), PAD.top);
+    ctx.lineTo(toX(v), PAD.top + plotH);
+    ctx.stroke();
+  }
+
+  if (state.type === 'WA_SB' && state.ka2) {
+    const ep1X = toX(ep);
+    const ep2X = toX(ep * 2);
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = '#cc6600';
+    ctx.lineWidth = 1.5;
+    
+    ctx.beginPath(); ctx.moveTo(ep1X, PAD.top); ctx.lineTo(ep1X, PAD.top + plotH); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ep2X, PAD.top); ctx.lineTo(ep2X, PAD.top + plotH); ctx.stroke();
+    
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#cc6600';
+    ctx.font = 'bold 10px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('EP1', ep1X, PAD.top + plotH + 26);
+    ctx.fillText('EP2', ep2X, PAD.top + plotH + 26);
+
+  } else {
+    const pKa = getCurrentPKa();
+    const epX = toX(ep);
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = '#cc6600';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(epX, PAD.top);
+    ctx.lineTo(epX, PAD.top + plotH);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#cc6600';
+    ctx.font = 'bold 10px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('EP', epX, PAD.top + plotH + 26);
+
+    if (pKa && state.type !== 'SA_SB') {
+      const hepX = toX(ep / 2);
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = '#cc0000';
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(70, 95);
-      ctx.lineTo(165, 95);
+      ctx.moveTo(hepX, PAD.top);
+      ctx.lineTo(hepX, PAD.top + plotH);
       ctx.stroke();
-      ctx.fillStyle = "#44d1bd";
-      ctx.fillText("e⁻ flow", 105, 88);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#cc0000';
+      ctx.font = '10px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('1/2 EP', hepX, PAD.top + plotH + 26);
+
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = '#cc0000';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(PAD.left, toY(pKa));
+      ctx.lineTo(PAD.left + plotW, toY(pKa));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#cc0000';
+      ctx.font = '10px Courier New, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`pKa=${pKa.toFixed(2)}`, PAD.left + 4, toY(pKa) - 3);
     }
-
-    details.textContent = profiles[val].details;
-    legend.innerHTML = profiles[val].legend.map((x) => `<span>${x}</span>`).join("");
   }
 
-  type.addEventListener("change", draw);
-  draw();
-}
-
-function renderUnit5() {
-  unitContainer.appendChild(
-    unitCard(`
-      <h3>Rate vs Concentration Simulator</h3>
-      <div class="layout-3">
-        <div>
-          <label for="concA">[A] (M)</label>
-          <input id="concA" type="range" min="0.1" max="2" step="0.05" value="1" />
-          <label for="tempK">Temperature (K)</label>
-          <input id="tempK" type="range" min="250" max="450" value="298" />
-          <label for="order">Reaction order in A</label>
-          <select id="order">
-            <option value="1">First order</option>
-            <option value="2">Second order</option>
-          </select>
-          <p id="rateReadout" class="notice"></p>
-        </div>
-        <div class="canvas-wrap"><canvas id="rateCanvas" height="180"></canvas></div>
-        <div class="card">
-          <h4>Collision Insight</h4>
-          <p id="collisionText"></p>
-        </div>
-      </div>
-    `)
-  );
-
-  const conc = document.getElementById("concA");
-  const temp = document.getElementById("tempK");
-  const order = document.getElementById("order");
-  const readout = document.getElementById("rateReadout");
-  const collisionText = document.getElementById("collisionText");
-  const canvas = document.getElementById("rateCanvas");
-
-  function update() {
-    const a = Number(conc.value);
-    const n = Number(order.value);
-    const t = Number(temp.value);
-    const k = Math.exp(-5000 / (8.314 * t));
-    const rate = k * Math.pow(a, n);
-    const scaled = clamp(rate / 0.3, 0, 1);
-    readout.textContent = `Rate ∝ k[A]^n = ${rate.toExponential(3)} (relative units)`;
-    collisionText.textContent = `At ${t} K, particle speed and collision energy increase; with order ${n}, concentration sensitivity is ${n === 2 ? "quadratic" : "linear"}.`;
-    drawSimpleBar(canvas, scaled, "#2f7ef7", "Relative reaction rate");
+  const numPreviewPoints = 150;
+  const previewCurve = [];
+  for (let i = 0; i <= numPreviewPoints; i++) {
+    const v = (i / numPreviewPoints) * maxVol;
+    const pH = calculatePH(v);
+    previewCurve.push({ vol: v, pH });
   }
 
-  conc.addEventListener("input", update);
-  temp.addEventListener("input", update);
-  order.addEventListener("change", update);
-  update();
-}
-
-function renderUnit6() {
-  unitContainer.appendChild(
-    unitCard(`
-      <h3>ΔG Explorer</h3>
-      <div class="layout-2">
-        <div>
-          <label for="deltaH">ΔH (kJ/mol)</label>
-          <input id="deltaH" type="range" min="-200" max="200" value="-40" />
-          <label for="deltaS">ΔS (J/mol·K)</label>
-          <input id="deltaS" type="range" min="-300" max="300" value="80" />
-          <label for="tempThermo">Temperature (K)</label>
-          <input id="tempThermo" type="range" min="200" max="1000" value="298" />
-          <p id="gibbsReadout" class="notice"></p>
-        </div>
-        <div class="canvas-wrap"><canvas id="thermoCanvas" height="220"></canvas></div>
-      </div>
-    `)
-  );
-
-  const dH = document.getElementById("deltaH");
-  const dS = document.getElementById("deltaS");
-  const t = document.getElementById("tempThermo");
-  const readout = document.getElementById("gibbsReadout");
-  const canvas = document.getElementById("thermoCanvas");
-
-  function update() {
-    const H = Number(dH.value);
-    const S = Number(dS.value) / 1000;
-    const T = Number(t.value);
-    const G = H - T * S;
-    readout.className = `notice ${G < 0 ? "ok" : "warn"}`;
-    readout.textContent = `ΔG = ΔH − TΔS = ${G.toFixed(2)} kJ/mol → ${G < 0 ? "Spontaneous" : "Non-spontaneous"} at ${T} K`;
-
-    const points = [];
-    for (let tempK = 200; tempK <= 1000; tempK += 20) points.push({ x: tempK - 200, y: H - tempK * S + 20 });
-    drawLineGraph(canvas, points, { xMax: 800, yMax: 40, yMin: -40 });
-  }
-
-  [dH, dS, t].forEach((el) => el.addEventListener("input", update));
-  update();
-}
-
-function renderUnit7() {
-  unitContainer.appendChild(
-    unitCard(`
-      <h3>Le Châtelier Shift Simulator</h3>
-      <p>Reaction model: A + B ⇌ C + D</p>
-      <div class="layout-2">
-        <div>
-          <label for="eqA">[A] (M)</label><input id="eqA" type="number" min="0.01" step="0.05" value="1" />
-          <label for="eqB">[B] (M)</label><input id="eqB" type="number" min="0.01" step="0.05" value="1" />
-          <label for="eqC">[C] (M)</label><input id="eqC" type="number" min="0.01" step="0.05" value="1" />
-          <label for="eqD">[D] (M)</label><input id="eqD" type="number" min="0.01" step="0.05" value="1" />
-          <label for="eqK">K value</label><input id="eqK" type="number" min="0.01" step="0.1" value="1" />
-          <div class="btn-row">
-            <button class="btn" id="eqShiftA">Add A</button>
-            <button class="btn secondary" id="eqShiftC">Add C</button>
-            <button class="btn alt" id="eqRecalc">Recalculate</button>
-          </div>
-          <p id="eqReadout" class="notice"></p>
-        </div>
-        <div class="canvas-wrap"><canvas id="eqCanvas" height="220"></canvas></div>
-      </div>
-    `)
-  );
-
-  const ids = ["eqA", "eqB", "eqC", "eqD", "eqK"].map((id) => document.getElementById(id));
-  const readout = document.getElementById("eqReadout");
-  const canvas = document.getElementById("eqCanvas");
-
-  function values() {
-    return {
-      A: Number(ids[0].value),
-      B: Number(ids[1].value),
-      C: Number(ids[2].value),
-      D: Number(ids[3].value),
-      K: Number(ids[4].value),
-    };
-  }
-
-  function recalc() {
-    const { A, B, C, D, K } = values();
-    const Q = (C * D) / Math.max(1e-9, A * B);
-    let shift = "at equilibrium";
-    if (Q < K) shift = "shifts right (toward products)";
-    if (Q > K) shift = "shifts left (toward reactants)";
-    readout.textContent = `Q = ${Q.toFixed(3)}, K = ${K.toFixed(3)} → system ${shift}.`;
-
-    drawLineGraph(
-      canvas,
-      [
-        { x: 0, y: clamp(A, 0, 14) },
-        { x: 20, y: clamp(B, 0, 14) },
-        { x: 40, y: clamp(C, 0, 14) },
-        { x: 60, y: clamp(D, 0, 14) },
-      ],
-      { xMax: 60, yMax: 14, yMin: 0 }
-    );
-  }
-
-  document.getElementById("eqShiftA").addEventListener("click", () => {
-    ids[0].value = (Number(ids[0].value) + 0.3).toFixed(2);
-    recalc();
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = dark ? '#888888' : '#bbbbbb';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  previewCurve.forEach((pt, i) => {
+    const x = toX(pt.vol);
+    const y = toY(pt.pH);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
-  document.getElementById("eqShiftC").addEventListener("click", () => {
-    ids[2].value = (Number(ids[2].value) + 0.3).toFixed(2);
-    recalc();
-  });
-  document.getElementById("eqRecalc").addEventListener("click", recalc);
-  ids.forEach((el) => el.addEventListener("input", recalc));
-  recalc();
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (state.dataPoints.length > 1) {
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#006699';
+    ctx.beginPath();
+    state.dataPoints.forEach((pt, i) => {
+      const x = toX(pt.vol);
+      const y = toY(pt.pH);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    const last = state.dataPoints[state.dataPoints.length - 1];
+    drawDownArrow(ctx, toX(last.vol), toY(last.pH), '#cc0000');
+  }
+
+  ctx.strokeStyle = dark ? '#dddddd' : '#222222';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(PAD.left, PAD.top);
+  ctx.lineTo(PAD.left, PAD.top + plotH);
+  ctx.lineTo(PAD.left + plotW, PAD.top + plotH);
+  ctx.stroke();
+
+  ctx.fillStyle = dark ? '#eeeeee' : '#111111';
+  ctx.font = '12px Courier New, monospace';
+  ctx.textAlign = 'right';
+  for (let pH = 0; pH <= 14; pH += 2) {
+    ctx.fillText(pH, PAD.left - 6, toY(pH) + 4);
+  }
+
+  ctx.textAlign = 'center';
+  for (let v = 0; v <= maxVol; v += ep / 2) {
+    ctx.fillText(v.toFixed(1), toX(v), PAD.top + plotH + 16);
+  }
+
+  ctx.fillStyle = dark ? '#dddddd' : '#222222';
+  ctx.font = 'bold 12px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Volume Titrant Added (mL)', PAD.left + plotW / 2, H - 4);
+
+  ctx.save();
+  ctx.translate(12, PAD.top + plotH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('pH', 0, 0);
+  ctx.restore();
 }
 
-function renderUnit8() {
-  unitContainer.innerHTML += `
-    <div class="layout-3">
-      <section class="card">
-        <h3>Titration Setup</h3>
-        <label for="titType">Titration type</label>
-        <select id="titType">
-          <option value="sasb">Strong Acid / Strong Base (SA/SB)</option>
-          <option value="wasb">Weak Acid / Strong Base (WA/SB)</option>
-          <option value="sawb">Strong Acid / Weak Base (SA/WB)</option>
-        </select>
-        <label for="analyteConc">Analyte concentration (M)</label>
-        <input id="analyteConc" type="number" value="0.1" step="0.01" min="0.001" max="20" />
-        <label for="analyteVol">Analyte volume (mL)</label>
-        <input id="analyteVol" type="number" value="25" step="1" min="1" max="500" />
-        <label for="titrantConc">Titrant concentration (M)</label>
-        <input id="titrantConc" type="number" value="0.1" step="0.01" min="0.001" max="20" />
-        <label for="kaInput">Ka (for weak acid, WA/SB)</label>
-        <input id="kaInput" type="number" value="0.0000018" step="any" min="0.00000000000001" max="1" />
-        <label for="kbInput">Kb (for weak base, SA/WB)</label>
-        <input id="kbInput" type="number" value="0.0000018" step="any" min="0.00000000000001" max="1" />
-        <label for="dropSize">Drop size (mL)</label>
-        <input id="dropSize" type="number" value="0.1" step="0.1" min="0.05" max="5" />
-        <div class="btn-row">
-          <button class="btn" id="addDrop">Add Drop</button>
-          <button class="btn alt" id="addMilli">Add 1.0 mL</button>
-          <button class="btn secondary" id="resetTit">Reset</button>
-        </div>
-        <div class="btn-row">
-          <button class="btn warn" id="challengeBtn">Challenge Mode</button>
-          <button class="btn secondary" id="explainGraph">Explain this graph</button>
-        </div>
-        <label><input id="stepMode" type="checkbox" /> Step-by-step explanation mode</label>
-        <label><input id="microToggle" type="checkbox" checked /> Microscopic view</label>
-        <div id="inputWarning" class="notice"></div>
-      </section>
+// ============================================================
+// BEAKER ANIMATION
+// ============================================================
+let beakerCanvas, beakerCtx;
+const particles = [];
+let animFrame;
 
-      <section class="card">
-        <h3>Live Data Panel</h3>
-        <div class="kpi" id="acidData"></div>
-        <h4>Species Concentrations (M)</h4>
-        <div class="species-grid" id="speciesData"></div>
-        <h4>pKa Relationship</h4>
-        <p id="pkaRelation" class="notice"></p>
-        <h4>Henderson–Hasselbalch</h4>
-        <p id="hhText" class="notice"></p>
-        <h4>Step Explanation</h4>
-        <p id="stepText" class="notice"></p>
-      </section>
+function initBeaker() {
+  beakerCanvas = document.getElementById('beaker-canvas');
+  beakerCtx = beakerCanvas.getContext('2d');
+  spawnParticles();
+  runBeakerAnimation();
+}
 
-      <section class="card">
-        <h3>Beaker View</h3>
-        <div class="beaker" id="beaker">
-          <div class="liquid" id="liquid"></div>
-          <div id="particleLayer"></div>
-        </div>
-        <div class="legend">
-          <span>🔴 H⁺</span><span>🔵 OH⁻</span><span>🟣 HA</span><span>🟢 A⁻</span><span>🟠 B</span><span>🟤 BH⁺</span>
-        </div>
-      </section>
-    </div>
-
-    <section class="card" style="margin-top: 0.9rem;">
-      <h3>Real-Time pH Curve</h3>
-      <div class="canvas-wrap"><canvas id="titrationGraph" height="300"></canvas></div>
-      <p id="pointInfo" class="small-note"></p>
-    </section>
-
-    <section class="card" style="margin-top: 0.9rem;" id="challengePanel"></section>
-  `;
-
-  // Core titration state uses moles + total volume model so each drop updates all values continuously.
-  const titration = {
-    type: "sasb",
-    Ca: 0.1,
-    Va: 25,
-    Cb: 0.1,
-    Ka: 1.8e-6,
-    Kb: 1.8e-6,
-    dropSize: 0.1,
-    vAdded: 0,
-    points: [],
-    challenge: null,
+function getParticleColor(type) {
+  const colors = {
+    'H+':  '#cc0000',
+    'OH-': '#006699',
+    'HA':  '#cc6600',
+    'A-':  '#333399',
+    'B':   '#660066',
+    'BH+': '#ff6600',
+    'H2O': '#99ccff',
+    'Na+': '#cccccc',
+    'Cl-': '#99cc99',
   };
+  return colors[type] || '#aaaaaa';
+}
 
-  const ids = {
-    titType: document.getElementById("titType"),
-    analyteConc: document.getElementById("analyteConc"),
-    analyteVol: document.getElementById("analyteVol"),
-    titrantConc: document.getElementById("titrantConc"),
-    kaInput: document.getElementById("kaInput"),
-    kbInput: document.getElementById("kbInput"),
-    dropSize: document.getElementById("dropSize"),
-    stepMode: document.getElementById("stepMode"),
-    microToggle: document.getElementById("microToggle"),
-    warning: document.getElementById("inputWarning"),
-    acidData: document.getElementById("acidData"),
-    speciesData: document.getElementById("speciesData"),
-    pkaRelation: document.getElementById("pkaRelation"),
-    hhText: document.getElementById("hhText"),
-    stepText: document.getElementById("stepText"),
-    graph: document.getElementById("titrationGraph"),
-    pointInfo: document.getElementById("pointInfo"),
-    beaker: document.getElementById("beaker"),
-    liquid: document.getElementById("liquid"),
-    particleLayer: document.getElementById("particleLayer"),
-    challengePanel: document.getElementById("challengePanel"),
-  };
+function spawnParticles() {
+  particles.length = 0;
+  const W = beakerCanvas.width;
+  const pH = state.dataPoints.length
+    ? state.dataPoints[state.dataPoints.length - 1].pH
+    : calculatePH(0);
 
-  function validateInputs() {
-    const checks = [
-      validateNumberInput(ids.analyteConc.value, { min: 1e-6, max: 20 }),
-      validateNumberInput(ids.analyteVol.value, { min: 0.01, max: 500 }),
-      validateNumberInput(ids.titrantConc.value, { min: 1e-6, max: 20 }),
-      validateNumberInput(ids.dropSize.value, { min: 0.01, max: 5 }),
-      validateNumberInput(ids.kaInput.value, { min: 1e-14, max: 1 }),
-      validateNumberInput(ids.kbInput.value, { min: 1e-14, max: 1 }),
-    ];
-    if (!checks.every(Boolean)) {
-      ids.warning.className = "notice warn";
-      ids.warning.textContent = "⚠️ Enter physically reasonable positive values (concentrations ≤ 20 M, volume ≤ 500 mL, 0 < Ka/Kb ≤ 1).";
-      return false;
+  const types = getParticleTypes(pH);
+
+  for (let i = 0; i < 55; i++) {
+    const type = types[Math.floor(Math.random() * types.length)];
+    particles.push({
+      x: 20 + Math.random() * (W - 40),
+      y: 60 + Math.random() * 150,
+      vx: (Math.random() - 0.5) * 0.6,
+      vy: (Math.random() - 0.5) * 0.6,
+      r: 5 + Math.random() * 3,
+      type,
+      label: type,
+      alpha: 0.8 + Math.random() * 0.2,
+    });
+  }
+}
+
+function getParticleTypes(pH) {
+  if (state.type === 'SA_SB') {
+    if (pH < 6.5) return ['H+', 'H+', 'H+', 'H2O', 'Cl-', 'Na+'];
+    if (pH > 7.5) return ['OH-', 'OH-', 'OH-', 'H2O', 'Cl-', 'Na+'];
+    return ['H2O', 'H2O', 'H2O', 'Cl-', 'Na+'];
+  }
+  if (state.type === 'WA_SB') {
+    if (pH < 4) return ['H+', 'HA', 'HA', 'HA', 'H2O'];
+    if (pH < 7) return ['HA', 'HA', 'A-', 'A-', 'H2O', 'Na+'];
+    if (pH < 8) return ['A-', 'A-', 'A-', 'OH-', 'H2O'];
+    return ['A-', 'OH-', 'OH-', 'H2O', 'Na+'];
+  }
+  if (pH > 10) return ['B', 'B', 'B', 'OH-', 'H2O'];
+  if (pH > 7)  return ['B', 'B', 'BH+', 'H2O', 'Cl-'];
+  if (pH > 4)  return ['BH+', 'BH+', 'B', 'H2O', 'Cl-', 'H+'];
+  return ['BH+', 'BH+', 'H+', 'H2O', 'Cl-'];
+}
+
+function drawBeaker() {
+  if (!beakerCtx) return;
+  const ctx = beakerCtx;
+  const W = beakerCanvas.width;
+  const H = beakerCanvas.height;
+  const dark = isDark;
+
+  ctx.clearRect(0, 0, W, H);
+
+  const bx = 14, by = 30, bw = W - 28, bh = H - 50;
+
+  const pH = state.dataPoints.length
+    ? state.dataPoints[state.dataPoints.length - 1].pH
+    : calculatePH(0);
+  const solutionColor = pHtoColor(pH, 0.2);
+
+  ctx.fillStyle = solutionColor;
+  ctx.fillRect(bx + 2, by + 2, bw - 4, bh - 4);
+
+  ctx.strokeStyle = dark ? '#aaaaaa' : '#222222';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(bx, by);
+  ctx.lineTo(bx, by + bh);
+  ctx.lineTo(bx + bw, by + bh);
+  ctx.lineTo(bx + bw, by);
+  ctx.stroke();
+
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(bx - 6, by);
+  ctx.lineTo(bx + bw + 6, by);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(bx + bw, by - 2);
+  ctx.lineTo(bx + bw + 10, by - 10);
+  ctx.stroke();
+
+  if (!state.particleMode) {
+    return;
+  }
+
+  particles.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = getParticleColor(p.type);
+    ctx.globalAlpha = p.alpha;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    if (p.r >= 6) {
+      ctx.fillStyle = dark ? '#fff' : '#000';
+      ctx.font = `bold ${Math.max(6, p.r - 1)}px Courier New`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.label, p.x, p.y);
     }
-    ids.warning.className = "notice ok";
-    ids.warning.textContent = "Inputs validated. Simulation is chemically reasonable.";
-    return true;
-  }
+  });
+}
 
-  function syncStateFromInputs() {
-    titration.type = ids.titType.value;
-    titration.Ca = Number(ids.analyteConc.value);
-    titration.Va = Number(ids.analyteVol.value);
-    titration.Cb = Number(ids.titrantConc.value);
-    titration.Ka = Number(ids.kaInput.value);
-    titration.Kb = Number(ids.kbInput.value);
-    titration.dropSize = Number(ids.dropSize.value);
-  }
+function pHtoColor(pH, alpha = 1) {
+  if (pH < 3)  return `rgba(204, 0, 0, ${alpha})`;
+  if (pH < 5)  return `rgba(204, 102, 0, ${alpha})`;
+  if (pH < 6)  return `rgba(204, 204, 0, ${alpha})`;
+  if (pH < 7)  return `rgba(153, 204, 51, ${alpha})`;
+  if (pH < 8)  return `rgba(51, 153, 51, ${alpha})`;
+  if (pH < 9)  return `rgba(0, 102, 153, ${alpha})`;
+  if (pH < 11) return `rgba(51, 51, 153, ${alpha})`;
+  return `rgba(102, 0, 102, ${alpha})`;
+}
 
-  function getEquivalenceVolume() {
-    const nAnalyte = titration.Ca * (titration.Va / 1000);
-    return (nAnalyte / Math.max(1e-12, titration.Cb)) * 1000;
-  }
-
-  // Calculates pH + species concentrations for each titration type.
-  function computePoint(vAdded) {
-    const Kw = 1e-14;
-    const nAnalyte = titration.Ca * (titration.Va / 1000);
-    const nTitrant = titration.Cb * (vAdded / 1000);
-    const Vtot = (titration.Va + vAdded) / 1000;
-
-    let pH = 7;
-    let explanation = "";
-    const species = { H: 1e-7, OH: 1e-7, HA: 0, A: 0, B: 0, BH: 0 };
-    let hh = "Not in a buffer region currently.";
-
-    if (titration.type === "sasb") {
-      if (nTitrant < nAnalyte) {
-        const H = (nAnalyte - nTitrant) / Vtot;
-        pH = -Math.log10(H);
-        species.H = H;
-        species.OH = Kw / H;
-        explanation = "Before equivalence: excess strong acid controls pH.";
-      } else if (Math.abs(nTitrant - nAnalyte) < 1e-12) {
-        pH = 7;
-        species.H = species.OH = 1e-7;
-        explanation = "At equivalence: strong acid and strong base neutralize completely (ideal pH ~ 7).";
-      } else {
-        const OH = (nTitrant - nAnalyte) / Vtot;
-        const pOH = -Math.log10(OH);
-        pH = 14 - pOH;
-        species.OH = OH;
-        species.H = Kw / OH;
-        explanation = "After equivalence: excess strong base controls pH.";
-      }
-    }
-
-    if (titration.type === "wasb") {
-      const Ka = titration.Ka;
-      const pKa = calcPFromK(Ka);
-      if (nTitrant === 0) {
-        const C = nAnalyte / Vtot;
-        const discriminant = Ka * Ka + 4 * Ka * C;
-        const H = discriminant >= 0 ? (-Ka + Math.sqrt(discriminant)) / 2 : 1e-7;
-        pH = -Math.log10(H);
-        species.H = H;
-        species.OH = Kw / H;
-        species.HA = C;
-        explanation = "Initial weak acid: partial ionization sets pH.";
-      } else if (nTitrant < nAnalyte) {
-        const nHA = nAnalyte - nTitrant;
-        const nA = nTitrant;
-        pH = pKa + Math.log10(Math.max(1e-12, nA / nHA));
-        species.H = Math.pow(10, -pH);
-        species.OH = Kw / species.H;
-        species.HA = nHA / Vtot;
-        species.A = nA / Vtot;
-        hh = `pH = pKa + log([A⁻]/[HA]) = ${pKa.toFixed(2)} + log(${fmtExp(species.A)}/${fmtExp(species.HA)})`;
-        explanation = "Buffer region: both HA and A⁻ present, Henderson–Hasselbalch applies.";
-      } else if (Math.abs(nTitrant - nAnalyte) < 1e-12) {
-        const cA = nAnalyte / Vtot;
-        const Kb = Kw / Ka;
-        const OH = Math.sqrt(Kb * cA);
-        pH = 14 + Math.log10(OH);
-        species.OH = OH;
-        species.H = Kw / OH;
-        species.A = cA;
-        explanation = "Equivalence: conjugate base hydrolysis makes solution basic.";
-      } else {
-        const OH = (nTitrant - nAnalyte) / Vtot;
-        pH = 14 + Math.log10(OH);
-        species.OH = OH;
-        species.H = Kw / OH;
-        species.A = nAnalyte / Vtot;
-        explanation = "After equivalence: excess OH⁻ dominates pH.";
-      }
-    }
-
-    if (titration.type === "sawb") {
-      const Kb = titration.Kb;
-      const pKb = -Math.log10(Kb);
-      if (nTitrant < nAnalyte) {
-        const H = (nAnalyte - nTitrant) / Vtot;
-        pH = -Math.log10(H);
-        species.H = H;
-        species.OH = Kw / H;
-        species.BH = nTitrant / Vtot;
-        explanation = "Before equivalence: excess strong acid dictates pH.";
-      } else if (Math.abs(nTitrant - nAnalyte) < 1e-12) {
-        const cBH = nAnalyte / Vtot;
-        const Ka = Kw / Kb;
-        const H = Math.sqrt(Ka * cBH);
-        pH = -Math.log10(H);
-        species.H = H;
-        species.OH = Kw / H;
-        species.BH = cBH;
-        explanation = "Equivalence: conjugate acid (BH⁺) hydrolysis makes pH acidic.";
-      } else {
-        const nBH = nAnalyte;
-        const nB = nTitrant - nAnalyte;
-        const pOH = pKb + Math.log10(Math.max(1e-12, nBH / nB));
-        pH = 14 - pOH;
-        species.OH = Math.pow(10, -pOH);
-        species.H = Kw / species.OH;
-        species.BH = nBH / Vtot;
-        species.B = nB / Vtot;
-        hh = `pOH = pKb + log([BH⁺]/[B]) = ${pKb.toFixed(2)} + log(${fmtExp(species.BH)}/${fmtExp(species.B)})`;
-        explanation = "After equivalence: weak base/conjugate acid buffer region forms.";
-      }
-    }
-
-    pH = clamp(pH, 0, 14);
-    const pOH = 14 - pH;
-    return { pH, pOH, species, explanation, Vtot, Veq: getEquivalenceVolume(), hh };
-  }
-
-  function relationText(pH) {
-    if (titration.type !== "wasb") return "pKa comparison is most informative for weak-acid titrations.";
-    const pKa = calcPFromK(titration.Ka);
-    if (Math.abs(pH - pKa) < 0.05) return "pH ≈ pKa: buffer midpoint (half-equivalence), [HA] ≈ [A⁻].";
-    if (pH < pKa) return "pH < pKa: protonated form (HA) dominates.";
-    return "pH > pKa: deprotonated form (A⁻) dominates.";
-  }
-
-  function bufferHighlight() {
-    const Veq = getEquivalenceVolume();
-    if (titration.type === "wasb") return { start: 0.1 * Veq, end: 0.9 * Veq };
-    if (titration.type === "sawb") return { start: 1.05 * Veq, end: 1.8 * Veq };
-    return null;
-  }
-
-  function redrawGraph() {
-    const Veq = getEquivalenceVolume();
-    drawLineGraph(ids.graph, titration.points, {
-      xMax: Math.max(Veq * 2, titration.vAdded + 2, 20),
-      yMax: 14,
-      yMin: 0,
-      highlight: bufferHighlight(),
+function runBeakerAnimation() {
+  function tick() {
+    particles.forEach(p => {
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.x < 20 || p.x > beakerCanvas.width - 20) p.vx *= -1;
+      if (p.y < 35 || p.y > beakerCanvas.height - 60) p.vy *= -1;
+      p.vx += (Math.random() - 0.5) * 0.04;
+      p.vy += (Math.random() - 0.5) * 0.04;
+      p.vx = Math.max(-0.8, Math.min(0.8, p.vx));
+      p.vy = Math.max(-0.8, Math.min(0.8, p.vy));
     });
 
-    const half = Veq / 2;
-    const latest = titration.points[titration.points.length - 1];
-    if (latest) {
-      ids.pointInfo.textContent = `Current: V = ${latest.x.toFixed(2)} mL, pH = ${latest.y.toFixed(3)} | Equivalence ≈ ${Veq.toFixed(2)} mL | Half-equivalence ≈ ${half.toFixed(2)} mL`;
+    drawBeaker();
+    animFrame = requestAnimationFrame(tick);
+  }
+  if (animFrame) cancelAnimationFrame(animFrame);
+  animFrame = requestAnimationFrame(tick);
+}
+
+// ============================================================
+// UI DATA UPDATES
+// ============================================================
+function updateDataPanel(vol) {
+  const pH = calculatePH(vol);
+  const cH  = Math.pow(10, -pH);
+  const cOH = 1e-14 / cH;
+  const pOH = -Math.log10(cOH);
+
+  document.getElementById('dp-ph').textContent = pH.toFixed(2);
+  document.getElementById('dp-poh').textContent = pOH.toFixed(2);
+  document.getElementById('dp-h').textContent = formatSci(cH);
+  document.getElementById('dp-oh').textContent = formatSci(cOH);
+  document.getElementById('dp-vol').textContent = vol.toFixed(1) + ' mL';
+
+  const pct = (pH / 14) * 100;
+  document.getElementById('ph-bar').style.left = pct + '%';
+
+  const ep = equivalencePointVol();
+  const hep = ep / 2;
+  const pKa = getCurrentPKa();
+  const epCard = document.getElementById('dp-eq-card');
+  const heqCard = document.getElementById('dp-heq-card');
+  const bufCard = document.getElementById('dp-buffer-card');
+  const hhCard = document.getElementById('hh-card');
+
+  epCard.style.display = '';
+  document.getElementById('dp-eq').textContent = state.ka2 ? `Diprotic System` : `${ep.toFixed(2)} mL (pH=${calculatePH(ep).toFixed(2)})`;
+
+  if (pKa && !state.ka2) {
+    heqCard.style.display = '';
+    document.getElementById('dp-heq').textContent = `${hep.toFixed(2)} mL (pKa=${pKa.toFixed(2)})`;
+
+    bufCard.style.display = '';
+    const inBuffer = vol > 0.05 * ep && vol < 0.95 * ep;
+    document.getElementById('dp-buffer').textContent = inBuffer
+      ? `Active (${(vol / ep * 100).toFixed(0)}% to EP)`
+      : `-`;
+
+    const hh = getHHValues(vol);
+    if (hh) {
+      hhCard.style.display = '';
+      document.getElementById('hh-values').innerHTML =
+        `pKa = ${hh.pKa}<br>` +
+        `[A-]/[HA] = ${hh.ratio}<br>` +
+        `log([A-]/[HA]) = ${hh.logRatio}<br>` +
+        `pH = ${hh.pKa} + ${hh.logRatio} = <b>${hh.calcPH}</b>`;
+    } else {
+      hhCard.style.display = 'none';
     }
+  } else {
+    heqCard.style.display = 'none';
+    bufCard.style.display = 'none';
+    hhCard.style.display = 'none';
   }
 
-  function drawParticles(species, microView) {
-    ids.particleLayer.innerHTML = "";
-    const colors = {
-      H: "#cf3f5e",
-      OH: "#2f7ef7",
-      HA: "#9656dd",
-      A: "#2baa7a",
-      B: "#f29a2e",
-      BH: "#8c5d2d",
-    };
+  const species = getSpecies(vol);
+  const listEl = document.getElementById('species-list');
+  listEl.innerHTML = species.map(s =>
+    `<div class="species-row"><span>${s.name}</span><span>${formatSci(s.val)} M</span></div>`
+  ).join('');
 
-    const volumeRatio = clamp((titration.Va + titration.vAdded) / 80, 0.3, 1);
-    ids.liquid.style.height = `${Math.round(40 + volumeRatio * 45)}%`;
+  document.getElementById('step-explanation-text').innerHTML = generateExplanation(vol);
+}
 
-    if (!microView) {
-      const last = titration.points[titration.points.length - 1] || { y: 7 };
-      // Phenolphthalein appears pink in basic solution above ~8.2 pH.
-      ids.liquid.style.background = last.y > PHENOLPHTHALEIN_PINK_START_PH ? PHENOLPHTHALEIN_PINK : SOLUTION_BLUE;
+function formatSci(n) {
+  if (n === 0) return '0';
+  if (n >= 0.001 && n < 1000) return n.toFixed(4);
+  const exp = Math.floor(Math.log10(Math.abs(n)));
+  const coeff = n / Math.pow(10, exp);
+  return `${coeff.toFixed(2)}x10^${exp}`;
+}
+
+// ============================================================
+// TITRATION ACTIONS
+// ============================================================
+function addTitrant(mlToAdd) {
+  const newVol = state.volAdded + mlToAdd;
+  state.volAdded = newVol;
+
+  const pH = calculatePH(newVol);
+  state.dataPoints.push({ vol: newVol, pH });
+
+  drawGraph();
+  updateDataPanel(newVol);
+  spawnParticles();
+}
+
+function undoDrop() {
+  if (state.dataPoints.length > 0) {
+    state.dataPoints.pop();
+    state.volAdded = state.dataPoints.length > 0 ? state.dataPoints[state.dataPoints.length - 1].vol : 0;
+    drawGraph();
+    updateDataPanel(state.volAdded);
+    spawnParticles();
+  }
+}
+
+function refreshCurve() {
+  state.dataPoints = [];
+  if(state.volAdded > 0) {
+      let steps = state.volAdded / 0.5;
+      for(let i=0; i <= steps; i++) {
+          let v = i * 0.5;
+          if (v > state.volAdded) v = state.volAdded;
+          state.dataPoints.push({vol: v, pH: calculatePH(v)});
+      }
+  }
+  drawGraph();
+  updateDataPanel(state.volAdded);
+  spawnParticles();
+}
+
+function resetTitration() {
+  state.volAdded = 0;
+  state.dataPoints = [];
+  if (state.autoInterval) { clearInterval(state.autoInterval); state.autoInterval = null; }
+  drawGraph();
+  updateDataPanel(0);
+  document.getElementById('dp-ph').textContent = '-';
+  spawnParticles();
+}
+
+function startAuto() {
+  if (state.autoInterval) {
+    clearInterval(state.autoInterval);
+    state.autoInterval = null;
+    document.getElementById('add-auto').textContent = 'Auto-fill';
+    return;
+  }
+  document.getElementById('add-auto').textContent = 'Pause';
+  state.autoInterval = setInterval(() => {
+    const ep = equivalencePointVol();
+    const max = state.ka2 ? ep * 3 : ep * 2;
+    if (state.volAdded >= max) {
+      clearInterval(state.autoInterval);
+      state.autoInterval = null;
+      document.getElementById('add-auto').textContent = 'Auto-fill';
       return;
     }
+    addTitrant(parseFloat(document.getElementById('drop-size').value));
+  }, 120);
+}
 
-    ids.liquid.style.background = SOLUTION_BLUE;
-    const entries = ["H", "OH", "HA", "A", "B", "BH"];
-    entries.forEach((key) => {
-      const amount = species[key] || 0;
-      const count = clamp(Math.round(Math.log10(amount + 1e-12) * PARTICLE_CONCENTRATION_SCALE + MIN_PARTICLE_COUNT), 2, 28);
-      for (let i = 0; i < count; i++) {
-        const p = document.createElement("div");
-        p.className = "particle";
-        p.style.background = colors[key];
-        p.style.left = `${Math.random() * 95}%`;
-        p.style.top = `${35 + Math.random() * 58}%`;
-        p.style.animationDuration = `${2 + Math.random() * 3.5}s`;
-        p.textContent = key === "OH" ? "−" : key === "H" ? "+" : key[0];
-        ids.particleLayer.appendChild(p);
-      }
-    });
+// ============================================================
+// INPUT VALIDATION
+// ============================================================
+function readInputs() {
+  state.analyteVol  = parseFloat(document.getElementById('analyte-vol').value) || 25;
+  state.analyteConc = parseFloat(document.getElementById('analyte-conc').value) || 0.1;
+  state.titrantConc = parseFloat(document.getElementById('titrant-conc').value) || 0.1;
+  if (state.type === 'WA_SB') {
+    state.ka = parseFloat(document.getElementById('ka-val').value) || 1.8e-5;
   }
-
-  function updatePanels(point) {
-    const { pH, pOH, species, explanation, hh } = point;
-    const H = species.H;
-    const OH = species.OH;
-    ids.acidData.innerHTML = `
-      <div><strong>pH</strong><br>${pH.toFixed(3)}</div>
-      <div><strong>pOH</strong><br>${pOH.toFixed(3)}</div>
-      <div><strong>[H⁺]</strong><br>${fmtExp(H)}</div>
-      <div><strong>[OH⁻]</strong><br>${fmtExp(OH)}</div>
-      <div><strong>Volume Added</strong><br>${titration.vAdded.toFixed(2)} mL</div>
-      <div><strong>Total Volume</strong><br>${(titration.Va + titration.vAdded).toFixed(2)} mL</div>
-    `;
-
-    ids.speciesData.innerHTML = `
-      <div>HA: ${fmtExp(species.HA)}</div>
-      <div>A⁻: ${fmtExp(species.A)}</div>
-      <div>B: ${fmtExp(species.B)}</div>
-      <div>BH⁺: ${fmtExp(species.BH)}</div>
-      <div>H⁺: ${fmtExp(species.H)}</div>
-      <div>OH⁻: ${fmtExp(species.OH)}</div>
-    `;
-
-    ids.pkaRelation.textContent = relationText(pH);
-    ids.hhText.textContent = hh;
-    ids.stepText.textContent = ids.stepMode.checked ? explanation : "Enable step-by-step mode to see drop-level interpretation.";
-    drawParticles(species, ids.microToggle.checked);
+  if (state.type === 'SA_WB') {
+    state.kb = parseFloat(document.getElementById('kb-val').value) || 1.8e-5;
   }
+}
 
-  function pushPointAndRender() {
-    const point = computePoint(titration.vAdded);
-    titration.points.push({ x: titration.vAdded, y: point.pH });
-    redrawGraph();
-    updatePanels(point);
-    return point;
-  }
 
-  function resetTitration() {
-    syncStateFromInputs();
-    if (!validateInputs()) return;
-    titration.vAdded = 0;
-    titration.points = [];
-    const point = pushPointAndRender();
-    ids.challengePanel.innerHTML = "<p class='small-note'>Start challenge mode to test prediction skills.</p>";
-    return point;
-  }
+// ============================================================
+// BUFFER SECTION
+// ============================================================
+let bufferInitialized = false;
+const bufferState = {
+  pKa: 4.76,
+  cHA: 0.1,
+  cA: 0.1,
+  vol: 100,
+  history: [], 
+};
 
-  function addVolume(delta) {
-    syncStateFromInputs();
-    if (!validateInputs()) return;
-    titration.vAdded = Math.max(0, titration.vAdded + delta);
-    const point = pushPointAndRender();
-    markUnitComplete("unit8");
-    return point;
-  }
+const BUFFER_SYSTEMS = {
+  acetate:   { pKa: 4.76,  name: 'Acetic acid / Acetate' },
+  phosphate: { pKa: 7.20,  name: 'Phosphate (H2PO4-/HPO4 2-)' },
+  carbonate: { pKa: 10.33, name: 'Carbonate' },
+  ammonia:   { pKa: 9.25,  name: 'Ammonia / Ammonium' },
+  custom:    { pKa: 7.00,  name: 'Custom' },
+};
 
-  function explainGraphRuleBased() {
-    if (titration.points.length < 3) return "Collect more data points to interpret curve behavior.";
-    const latest = titration.points[titration.points.length - 1];
-    const Veq = getEquivalenceVolume();
-    let msg = "";
-    if (latest.x < Veq * 0.9) msg += "You are mostly in the pre-equivalence region. ";
-    else if (latest.x <= Veq * 1.1) msg += "You are near the equivalence region where slope is steepest. ";
-    else msg += "You are in post-equivalence region where excess titrant dominates pH. ";
-
-    if (titration.type === "wasb") msg += "For WA/SB, buffer behavior appears before equivalence and pH approaches pKa at half-equivalence.";
-    if (titration.type === "sasb") msg += "For SA/SB, pH jump is very sharp around equivalence with little buffer action.";
-    if (titration.type === "sawb") msg += "For SA/WB, equivalence pH is below 7 and buffer character appears after equivalence.";
-
-    ids.stepText.textContent = msg;
-  }
-
-  function startChallenge() {
-    const Veq = getEquivalenceVolume();
-    const current = computePoint(titration.vAdded);
-    const mode = Math.random() < 0.5 ? "eq" : "ph";
-    titration.challenge = mode;
-
-    ids.challengePanel.innerHTML = mode === "eq"
-      ? `
-      <h3>Challenge Mode</h3>
-      <p>Predict the equivalence-point volume (mL).</p>
-      <input id="challengeAnswer" type="number" step="0.1" />
-      <button class="btn" id="checkChallenge">Check</button>
-      <p id="challengeFeedback" class="notice"></p>
-      `
-      : `
-      <h3>Challenge Mode</h3>
-      <p>Predict pH after one more 1.0 mL addition from current state.</p>
-      <input id="challengeAnswer" type="number" step="0.01" />
-      <button class="btn" id="checkChallenge">Check</button>
-      <p id="challengeFeedback" class="notice"></p>
-      `;
-
-    document.getElementById("checkChallenge").addEventListener("click", () => {
-      const ans = Number(document.getElementById("challengeAnswer").value);
-      const feedback = document.getElementById("challengeFeedback");
-      if (!Number.isFinite(ans)) {
-        feedback.className = "notice warn";
-        feedback.textContent = "Enter a numerical answer.";
-        return;
-      }
-      if (mode === "eq") {
-        const err = Math.abs(ans - Veq);
-        const ok = err <= Math.max(0.5, Veq * 0.05);
-        feedback.className = `notice ${ok ? "ok" : "danger"}`;
-        feedback.textContent = `${ok ? "Great prediction!" : "Not quite."} Expected ≈ ${Veq.toFixed(2)} mL.`;
-      } else {
-        const next = computePoint(titration.vAdded + 1).pH;
-        const err = Math.abs(ans - next);
-        const ok = err <= 0.25;
-        feedback.className = `notice ${ok ? "ok" : "danger"}`;
-        feedback.textContent = `${ok ? "Excellent pH estimate!" : "Try again."} Expected pH ≈ ${next.toFixed(3)}.`;
-      }
-    });
-
-    ids.stepText.textContent = `Challenge started (${mode === "eq" ? "equivalence volume" : "future pH"}). Current pH is ${current.pH.toFixed(3)}.`;
-  }
-
-  document.getElementById("addDrop").addEventListener("click", () => addVolume(Number(ids.dropSize.value)));
-  document.getElementById("addMilli").addEventListener("click", () => addVolume(1));
-  document.getElementById("resetTit").addEventListener("click", resetTitration);
-  document.getElementById("challengeBtn").addEventListener("click", startChallenge);
-  document.getElementById("explainGraph").addEventListener("click", explainGraphRuleBased);
-  ids.microToggle.addEventListener("change", () => {
-    if (!titration.points.length) return;
-    updatePanels(computePoint(titration.vAdded));
+function initBuffer() {
+  bufferInitialized = true;
+  document.getElementById('buffer-system').addEventListener('change', e => {
+    const sys = e.target.value;
+    if (sys === 'custom') {
+      document.getElementById('custom-pka-group').style.display = '';
+      bufferState.pKa = parseFloat(document.getElementById('custom-pka').value) || 7.0;
+    } else {
+      document.getElementById('custom-pka-group').style.display = 'none';
+      bufferState.pKa = BUFFER_SYSTEMS[sys].pKa;
+    }
+    resetBuffer();
   });
 
-  [
-    ids.titType,
-    ids.analyteConc,
-    ids.analyteVol,
-    ids.titrantConc,
-    ids.kaInput,
-    ids.kbInput,
-    ids.dropSize,
-    ids.stepMode,
-  ].forEach((el) => el.addEventListener("input", resetTitration));
+  document.getElementById('custom-pka').addEventListener('input', e => {
+    bufferState.pKa = parseFloat(e.target.value) || 7.0;
+    updateBufferDisplay();
+    drawBufferGraph();
+  });
 
-  resetTitration();
+  ['buf-ha', 'buf-a', 'buf-vol'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => {
+      readBufferInputs();
+      updateBufferDisplay();
+      drawBufferGraph();
+    });
+  });
+
+  document.getElementById('buf-add-amount').addEventListener('input', e => {
+    document.getElementById('buf-add-label').textContent = parseFloat(e.target.value).toFixed(1);
+  });
+
+  readBufferInputs();
+  updateBufferDisplay();
+  drawBufferGraph();
 }
 
-function renderUnit9() {
-  unitContainer.appendChild(
-    unitCard(`
-      <h3>Electrochemistry + Thermodynamics Simulator</h3>
-      <div class="layout-2">
-        <div>
-          <label for="e0">E°cell (V)</label>
-          <input id="e0" type="number" value="1.10" step="0.01" />
-          <label for="nElectron">n (electrons transferred)</label>
-          <input id="nElectron" type="number" value="2" step="1" min="1" max="6" />
-          <label for="qValue">Reaction quotient Q</label>
-          <input id="qValue" type="number" value="1" step="0.1" min="0.0001" />
-          <label for="tempN">Temperature (K)</label>
-          <input id="tempN" type="range" min="250" max="400" value="298" />
-          <p id="nernstOut" class="notice"></p>
-        </div>
-        <div class="canvas-wrap"><canvas id="nernstCanvas" height="220"></canvas></div>
-      </div>
-    `)
-  );
+function readBufferInputs() {
+  bufferState.cHA = parseFloat(document.getElementById('buf-ha').value) || 0.1;
+  bufferState.cA  = parseFloat(document.getElementById('buf-a').value)  || 0.1;
+  bufferState.vol = parseFloat(document.getElementById('buf-vol').value) || 100;
+}
 
-  const e0 = document.getElementById("e0");
-  const n = document.getElementById("nElectron");
-  const q = document.getElementById("qValue");
-  const t = document.getElementById("tempN");
-  const out = document.getElementById("nernstOut");
-  const canvas = document.getElementById("nernstCanvas");
+function addToBuffer(type, amount) {
+  readBufferInputs();
+  const addVol = parseFloat(document.getElementById('buf-add-amount').value);
+  const addConc = parseFloat(document.getElementById('buf-add-conc').value) || 0.1;
+  document.getElementById('buf-add-conc-label').textContent = addConc.toFixed(3);
 
-  function update() {
-    const R = 8.314;
-    const F = 96485;
-    const T = Number(t.value);
-    const E0 = Number(e0.value);
-    const ne = Math.max(1, Number(n.value));
-    const Q = Math.max(1e-12, Number(q.value));
-    // Natural-log Nernst form: E = E° - (RT/nF)lnQ.
-    const E = E0 - (R * T / (ne * F)) * Math.log(Q);
-    const dG = -ne * F * E / 1000;
-    out.textContent = `E = ${E.toFixed(3)} V, ΔG = ${dG.toFixed(2)} kJ/mol (${dG < 0 ? "spontaneous" : "non-spontaneous"})`;
-    drawSimpleBar(canvas, clamp(E / Math.max(0.01, E0 + 0.6), 0, 1), "#44d1bd", "Cell potential relative scale");
+  const totalVol = bufferState.vol + addVol;
+  const mmolHA = bufferState.cHA * bufferState.vol;
+  const mmolA  = bufferState.cA  * bufferState.vol;
+  const mmolAdded = addConc * addVol;
+
+  let newMmolHA = mmolHA;
+  let newMmolA  = mmolA;
+
+  if (type === 'acid') {
+    const consumed = Math.min(mmolAdded, mmolA);
+    newMmolHA += consumed;
+    newMmolA  -= consumed;
+    const excessH = mmolAdded - consumed;
+    if (excessH > 0) {
+      bufferState.vol = totalVol;
+      bufferState.cHA = newMmolHA / totalVol;
+      bufferState.cA  = newMmolA  / totalVol;
+      const cHtotal = (excessH / totalVol) + Math.pow(10, -bufferPH());
+      bufferState.cA = Math.max(0, bufferState.cA);
+      showToast('Buffer capacity exceeded! pH dropped sharply.');
+    }
+  } else {
+    const consumed = Math.min(mmolAdded, mmolHA);
+    newMmolHA -= consumed;
+    newMmolA  += consumed;
+    const excessOH = mmolAdded - consumed;
+    if (excessOH > 0) {
+      showToast('Buffer capacity exceeded! pH rose sharply.');
+    }
   }
 
-  [e0, n, q].forEach((el) => el.addEventListener("input", update));
-  t.addEventListener("input", update);
-  update();
+  bufferState.vol = totalVol;
+  bufferState.cHA = Math.max(0, newMmolHA / totalVol);
+  bufferState.cA  = Math.max(0, newMmolA  / totalVol);
+
+  const pH = bufferPH();
+  bufferState.history.push({ action: type, pH });
+
+  document.getElementById('buf-ha').value = bufferState.cHA.toFixed(4);
+  document.getElementById('buf-a').value  = bufferState.cA.toFixed(4);
+  document.getElementById('buf-vol').value = bufferState.vol.toFixed(1);
+
+  updateBufferDisplay();
+  drawBufferGraph();
 }
 
-tabs.forEach((tab) => {
-  tab.addEventListener("click", () => setActiveTab(tab.dataset.unit));
-});
+function bufferPH() {
+  if (bufferState.cHA <= 0 && bufferState.cA <= 0) return 7;
+  if (bufferState.cHA <= 0) return 14;
+  if (bufferState.cA  <= 0) return 0;
+  return bufferState.pKa + Math.log10(bufferState.cA / bufferState.cHA);
+}
 
-darkModeToggle.addEventListener("click", () => {
-  document.body.classList.toggle("dark");
-  state.darkMode = document.body.classList.contains("dark");
-  localStorage.setItem("schefchem-dark", state.darkMode ? "1" : "0");
-  renderUnit(state.activeUnit);
-});
+function resetBuffer() {
+  readBufferInputs();
+  bufferState.history = [];
+  updateBufferDisplay();
+  drawBufferGraph();
+}
 
-updateProgressBadge();
-renderUnit(state.activeUnit);
+function updateBufferDisplay() {
+  const pH = bufferPH();
+  document.getElementById('buf-ph').textContent = pH.toFixed(3);
+  document.getElementById('buf-pka').textContent = bufferState.pKa.toFixed(2);
+  document.getElementById('buf-ha-val').textContent = bufferState.cHA.toFixed(4) + ' M';
+  document.getElementById('buf-a-val').textContent  = bufferState.cA.toFixed(4) + ' M';
+
+  const ratio = bufferState.cHA > 0 ? (bufferState.cA / bufferState.cHA).toFixed(3) : 'Infinity';
+  document.getElementById('buf-ratio').textContent = ratio;
+
+  const logRatio = bufferState.cHA > 0 && bufferState.cA > 0
+    ? Math.log10(bufferState.cA / bufferState.cHA).toFixed(3)
+    : '-';
+  document.getElementById('buf-hh-values').innerHTML =
+    `pKa = ${bufferState.pKa.toFixed(2)}<br>` +
+    `log([A-]/[HA]) = ${logRatio}<br>` +
+    `pH = ${bufferState.pKa.toFixed(2)} + ${logRatio} = <b>${pH.toFixed(3)}</b>`;
+
+  const capacity = Math.min(bufferState.cHA, bufferState.cA);
+  const initialCapacity = Math.min(
+    parseFloat(document.getElementById('buf-ha').getAttribute('data-init')) || bufferState.cHA,
+    parseFloat(document.getElementById('buf-a').getAttribute('data-init'))  || bufferState.cA
+  );
+  const fraction = initialCapacity > 0
+    ? Math.max(0, Math.min(1, capacity / initialCapacity))
+    : 0;
+  document.getElementById('cap-bar').style.width = (fraction * 100) + '%';
+  document.getElementById('cap-text').textContent = (fraction * 100).toFixed(0) + '%';
+}
+
+let bufferGraphCanvas, bufferGraphCtx;
+
+function drawBufferGraph() {
+  bufferGraphCanvas = document.getElementById('buffer-graph');
+  if (!bufferGraphCanvas) return;
+  bufferGraphCtx = bufferGraphCanvas.getContext('2d');
+  const ctx = bufferGraphCtx;
+  const W = bufferGraphCanvas.width;
+  const H = bufferGraphCanvas.height;
+  const dark = isDark;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = dark ? '#2b2b2b' : '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  const PAD = { top: 20, right: 20, bottom: 40, left: 50 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+
+  function toX(pH) { return PAD.left + (pH / 14) * plotW; }
+  function toY(f)  { return PAD.top + plotH - f * plotH; }
+
+  ctx.strokeStyle = dark ? '#444444' : '#dddddd';
+  ctx.lineWidth = 1;
+  for (let f = 0; f <= 1; f += 0.25) {
+    ctx.beginPath(); ctx.moveTo(PAD.left, toY(f)); ctx.lineTo(PAD.left + plotW, toY(f)); ctx.stroke();
+  }
+  for (let pH = 0; pH <= 14; pH += 2) {
+    ctx.beginPath(); ctx.moveTo(toX(pH), PAD.top); ctx.lineTo(toX(pH), PAD.top + plotH); ctx.stroke();
+  }
+
+  const pKa = bufferState.pKa;
+  const Ka = Math.pow(10, -pKa);
+
+  ctx.strokeStyle = '#006699';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i <= 200; i++) {
+    const pH = (i / 200) * 14;
+    const cH = Math.pow(10, -pH);
+    const alphaA = Ka / (Ka + cH);
+    const x = toX(pH);
+    const y = toY(alphaA);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = '#cc0000';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i <= 200; i++) {
+    const pH = (i / 200) * 14;
+    const cH = Math.pow(10, -pH);
+    const alphaHA = cH / (Ka + cH);
+    const x = toX(pH);
+    const y = toY(alphaHA);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = '#cc6600';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(toX(pKa), PAD.top);
+  ctx.lineTo(toX(pKa), PAD.top + plotH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#cc6600';
+  ctx.font = 'bold 10px Courier New, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`pKa=${pKa.toFixed(2)}`, toX(pKa), PAD.top + 12);
+
+  const bLow = Math.max(0, pKa - 1);
+  const bHigh = Math.min(14, pKa + 1);
+  ctx.fillStyle = 'rgba(0,102,153,0.1)';
+  ctx.fillRect(toX(bLow), PAD.top, toX(bHigh) - toX(bLow), plotH);
+
+  const curPH = bufferPH();
+  const cH_cur = Math.pow(10, -curPH);
+  const alphaA_cur = Ka / (Ka + cH_cur);
+  drawDownArrow(ctx, toX(curPH), toY(alphaA_cur), '#660066');
+
+  bufferState.history.forEach(pt => {
+    const cH = Math.pow(10, -pt.pH);
+    const fA = Ka / (Ka + cH);
+    ctx.fillStyle = pt.action === 'acid' ? 'rgba(204,0,0,0.6)' : 'rgba(0,102,153,0.6)';
+    ctx.fillRect(toX(pt.pH) - 3, toY(fA) - 3, 6, 6);
+  });
+
+  ctx.strokeStyle = dark ? '#dddddd' : '#222222';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(PAD.left, PAD.top);
+  ctx.lineTo(PAD.left, PAD.top + plotH);
+  ctx.lineTo(PAD.left + plotW, PAD.top + plotH);
+  ctx.stroke();
+
+  ctx.fillStyle = dark ? '#eeeeee' : '#111111';
+  ctx.font = '10px Courier New, monospace';
+  ctx.textAlign = 'right';
+  for (let f = 0; f <= 1; f += 0.25) {
+    ctx.fillText(f.toFixed(2), PAD.left - 4, toY(f) + 4);
+  }
+  ctx.textAlign = 'center';
+  for (let pH = 0; pH <= 14; pH += 2) {
+    ctx.fillText(pH, toX(pH), PAD.top + plotH + 14);
+  }
+
+  ctx.font = 'bold 12px Arial';
+  ctx.fillText('pH', PAD.left + plotW / 2, H - 4);
+
+  ctx.font = '11px Arial';
+  ctx.fillStyle = '#cc0000';
+  ctx.textAlign = 'left';
+  ctx.fillText(' [HA] fraction', PAD.left + 4, PAD.top + 24);
+  ctx.fillStyle = '#006699';
+  ctx.fillText(' [A-] fraction', PAD.left + 4, PAD.top + 38);
+  ctx.fillStyle = '#cc6600';
+  ctx.fillText(' Buffer region (pKa +/- 1)', PAD.left + 4, PAD.top + 52);
+}
+
+// ============================================================
+// pH & pKa SECTION
+// ============================================================
+let phkaInitialized = false;
+let phkaGraphCanvas, phkaGraphCtx;
+let phkaPieCanvas, phkaPieCtx;
+
+function initPhKa() {
+  phkaInitialized = true;
+  phkaGraphCanvas = document.getElementById('phka-graph');
+  phkaGraphCtx = phkaGraphCanvas.getContext('2d');
+  phkaPieCanvas = document.getElementById('phka-pie');
+  phkaPieCtx = phkaPieCanvas.getContext('2d');
+
+  document.getElementById('phka-pka').addEventListener('input', e => {
+    document.getElementById('phka-pka-val').textContent = parseFloat(e.target.value).toFixed(2);
+    drawPhKaGraph();
+    drawPie();
+    updatePhKaCard();
+  });
+
+  document.getElementById('phka-ph').addEventListener('input', e => {
+    document.getElementById('phka-ph-val').textContent = parseFloat(e.target.value).toFixed(2);
+    drawPhKaGraph();
+    drawPie();
+    updatePhKaCard();
+  });
+
+  drawPhKaGraph();
+  drawPie();
+  updatePhKaCard();
+}
+
+function drawPhKaGraph() {
+  const ctx = phkaGraphCtx;
+  const W = phkaGraphCanvas.width;
+  const H = phkaGraphCanvas.height;
+  const dark = isDark;
+  const pKa = parseFloat(document.getElementById('phka-pka').value);
+  const curPH = parseFloat(document.getElementById('phka-ph').value);
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = dark ? '#2b2b2b' : '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  const PAD = { top: 20, right: 20, bottom: 40, left: 50 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+
+  function toX(pH) { return PAD.left + (pH / 14) * plotW; }
+  function toY(f)  { return PAD.top + plotH - f * plotH; }
+
+  const Ka = Math.pow(10, -pKa);
+
+  ctx.strokeStyle = dark ? '#444444' : '#dddddd';
+  ctx.lineWidth = 1;
+  [0, 0.25, 0.5, 0.75, 1].forEach(f => {
+    ctx.beginPath(); ctx.moveTo(PAD.left, toY(f)); ctx.lineTo(PAD.left + plotW, toY(f)); ctx.stroke();
+  });
+  for (let pH = 0; pH <= 14; pH += 2) {
+    ctx.beginPath(); ctx.moveTo(toX(pH), PAD.top); ctx.lineTo(toX(pH), PAD.top + plotH); ctx.stroke();
+  }
+
+  ctx.strokeStyle = '#cc0000';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i <= 400; i++) {
+    const pH = (i / 400) * 14;
+    const cH = Math.pow(10, -pH);
+    const f = cH / (Ka + cH);
+    i === 0 ? ctx.moveTo(toX(pH), toY(f)) : ctx.lineTo(toX(pH), toY(f));
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = '#006699';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i <= 400; i++) {
+    const pH = (i / 400) * 14;
+    const cH = Math.pow(10, -pH);
+    const f = Ka / (Ka + cH);
+    i === 0 ? ctx.moveTo(toX(pH), toY(f)) : ctx.lineTo(toX(pH), toY(f));
+  }
+  ctx.stroke();
+
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = '#cc6600';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(toX(pKa), PAD.top); ctx.lineTo(toX(pKa), PAD.top + plotH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#cc6600';
+  ctx.font = 'bold 10px Courier New, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`pKa=${pKa.toFixed(2)}`, toX(pKa), PAD.top + 12);
+
+  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = '#660066';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(toX(curPH), PAD.top); ctx.lineTo(toX(curPH), PAD.top + plotH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const cH_cur = Math.pow(10, -curPH);
+  const fHA = cH_cur / (Ka + cH_cur);
+  const fA  = Ka    / (Ka + cH_cur);
+
+  drawDownArrow(ctx, toX(curPH), toY(fHA), '#660066');
+  drawDownArrow(ctx, toX(curPH), toY(fA), '#660066');
+
+  ctx.strokeStyle = dark ? '#dddddd' : '#222222';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(PAD.left, PAD.top);
+  ctx.lineTo(PAD.left, PAD.top + plotH);
+  ctx.lineTo(PAD.left + plotW, PAD.top + plotH);
+  ctx.stroke();
+
+  ctx.fillStyle = dark ? '#eeeeee' : '#111111';
+  ctx.font = '10px Courier New, monospace';
+  ctx.textAlign = 'right';
+  [0, 0.25, 0.5, 0.75, 1].forEach(f => ctx.fillText(f.toFixed(2), PAD.left - 4, toY(f) + 4));
+  ctx.textAlign = 'center';
+  for (let pH = 0; pH <= 14; pH += 2) ctx.fillText(pH, toX(pH), PAD.top + plotH + 14);
+  
+  ctx.font = 'bold 12px Arial';
+  ctx.fillText('pH', PAD.left + plotW / 2, H - 4);
+
+  ctx.textAlign = 'left';
+  ctx.font = '11px Arial';
+  ctx.fillStyle = '#cc0000'; ctx.fillText(' [HA] fraction', PAD.left + 4, PAD.top + 22);
+  ctx.fillStyle = '#006699'; ctx.fillText(' [A-] fraction', PAD.left + 4, PAD.top + 36);
+  ctx.fillStyle = '#660066'; ctx.fillText(' Current pH', PAD.left + 4, PAD.top + 50);
+}
+
+function drawPie() {
+  const ctx = phkaPieCtx;
+  const W = phkaPieCanvas.width;
+  const H = phkaPieCanvas.height;
+  const dark = isDark;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = dark ? '#2b2b2b' : '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  const pKa = parseFloat(document.getElementById('phka-pka').value);
+  const curPH = parseFloat(document.getElementById('phka-ph').value);
+  const Ka = Math.pow(10, -pKa);
+  const cH = Math.pow(10, -curPH);
+  const fA  = Ka / (Ka + cH);
+  const fHA = cH / (Ka + cH);
+
+  const cx = W / 2, cy = H / 2 - 10, r = 72;
+
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + fHA * 2 * Math.PI);
+  ctx.closePath();
+  ctx.fillStyle = '#cc0000';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, r, -Math.PI / 2 + fHA * 2 * Math.PI, -Math.PI / 2 + 2 * Math.PI);
+  ctx.closePath();
+  ctx.fillStyle = '#006699';
+  ctx.fill();
+
+  ctx.fillStyle = dark ? '#eeeeee' : '#111111';
+  ctx.font = 'bold 11px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  if (fHA > 0.05) {
+    const midAngle = -Math.PI / 2 + fHA * Math.PI;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`${(fHA * 100).toFixed(1)}%`, cx + Math.cos(midAngle) * r * 0.6, cy + Math.sin(midAngle) * r * 0.6);
+  }
+  if (fA > 0.05) {
+    const midAngle = -Math.PI / 2 + fHA * 2 * Math.PI + fA * Math.PI;
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`${(fA * 100).toFixed(1)}%`, cx + Math.cos(midAngle) * r * 0.6, cy + Math.sin(midAngle) * r * 0.6);
+  }
+
+  document.getElementById('pie-legend').innerHTML =
+    `<span style="color:#cc0000; font-weight:bold;">[ ]</span> [HA] = ${(fHA * 100).toFixed(1)}%<br>` +
+    `<span style="color:#006699; font-weight:bold;">[ ]</span> [A-] = ${(fA * 100).toFixed(1)}%`;
+}
+
+function updatePhKaCard() {
+  const pKa = parseFloat(document.getElementById('phka-pka').value);
+  const pH  = parseFloat(document.getElementById('phka-ph').value);
+  const diff = pH - pKa;
+  const Ka = Math.pow(10, -pKa);
+  const cH = Math.pow(10, -pH);
+  const fA  = (Ka / (Ka + cH) * 100).toFixed(1);
+  const fHA = (cH / (Ka + cH) * 100).toFixed(1);
+
+  let comparison, explain;
+  if (Math.abs(diff) < 0.05) {
+    comparison = 'pH = pKa';
+    explain = 'Equal amounts of acid and conjugate base. Maximum buffer capacity. log([A-]/[HA]) = 0.';
+  } else if (diff < 0) {
+    comparison = `pH < pKa (by ${Math.abs(diff).toFixed(2)})`;
+    explain = `Solution is more acidic than pKa. HA dominates (${fHA}% acid form). [A-]/[HA] < 1.`;
+  } else {
+    comparison = `pH > pKa (by ${diff.toFixed(2)})`;
+    explain = `Solution is more basic than pKa. A- dominates (${fA}% base form). [A-]/[HA] > 1.`;
+  }
+
+  document.getElementById('phka-comparison').textContent = comparison;
+  document.getElementById('phka-fractions').innerHTML =
+    `[HA] = ${fHA}% [A-] = ${fA}%<br>log([A-]/[HA]) = ${diff.toFixed(3)}`;
+  document.getElementById('phka-label-explain').textContent = explain;
+}
+
+// ============================================================
+// HERO CANVAS ANIMATION
+// ============================================================
+function initHeroCanvas() {
+  const canvas = document.getElementById('hero-canvas');
+  if (!canvas) return;
+  
+  function resizeCanvas() {
+    canvas.width = canvas.parentElement.clientWidth;
+    canvas.height = canvas.parentElement.clientHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  const ctx = canvas.getContext('2d');
+  
+  const heroParticles = Array.from({ length: 45 }, () => ({
+    x: Math.random() * canvas.width,
+    y: Math.random() * canvas.height,
+    r: 6 + Math.random() * 8,
+    vx: (Math.random() - 0.5) * 0.8,
+    vy: (Math.random() - 0.5) * 0.8,
+    type: ['H+','OH-','HA','A-','H2O'][Math.floor(Math.random() * 5)],
+    color: ['#cc0000','#006699','#cc6600','#333399','#99ccff'][Math.floor(Math.random() * 5)],
+    phase: Math.random() * Math.PI * 2,
+  }));
+
+  let t = 0;
+  function tick() {
+    const W = canvas.width;
+    const H = canvas.height;
+    
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = isDark ? '#2b2b2b' : '#ffffff';
+    ctx.fillRect(0, 0, W, H);
+
+    heroParticles.forEach(p => {
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.x < p.r || p.x > W - p.r) p.vx *= -1;
+      if (p.y < p.r || p.y > H - p.r) p.vy *= -1;
+
+      const pulse = 1 + 0.12 * Math.sin(t * 0.03 + p.phase);
+      const rr = p.r * pulse;
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = 0.9;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = isDark ? '#dddddd' : '#222222';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.max(7, rr - 2)}px Courier New`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.type, p.x, p.y);
+    });
+    t++;
+    requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+// ============================================================
+// EVENT LISTENERS
+// ============================================================
+document.addEventListener('DOMContentLoaded', () => {
+
+  initGraph();
+  initBeaker();
+  initHeroCanvas();
+
+  readInputs();
+  updateDataPanel(0);
+
+  document.querySelectorAll('.type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.type = btn.dataset.type;
+
+      document.getElementById('ka-group').style.display = state.type === 'WA_SB' ? '' : 'none';
+      document.getElementById('kb-group').style.display = state.type === 'SA_WB' ? '' : 'none';
+
+      resetTitration();
+    });
+  });
+
+  ['analyte-vol', 'analyte-conc', 'titrant-conc'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+        el.addEventListener('input', (e) => {
+            document.getElementById(id + '-label').textContent = parseFloat(e.target.value).toFixed(id.includes('vol') ? 0 : 3);
+            readInputs();
+            refreshCurve();
+        });
+    }
+  });
+
+  ['ka-val', 'kb-val'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => {
+      state.ka2 = null; 
+      readInputs();
+      refreshCurve();
+    });
+  });
+
+  document.getElementById('drop-size').addEventListener('input', e => {
+    document.getElementById('drop-size-label').textContent = parseFloat(e.target.value).toFixed(1);
+  });
+
+  document.getElementById('add-drop').addEventListener('click', () => {
+    readInputs();
+    const dropSize = parseFloat(document.getElementById('drop-size').value);
+    addTitrant(dropSize);
+  });
+
+  document.getElementById('undo-drop').addEventListener('click', undoDrop);
+
+  document.getElementById('add-auto').addEventListener('click', () => {
+    readInputs();
+    startAuto();
+  });
+
+  document.getElementById('reset-titration').addEventListener('click', resetTitration);
+
+  document.getElementById('particle-toggle').addEventListener('change', e => {
+    state.particleMode = e.target.checked;
+    document.getElementById('beaker-section').style.display = e.target.checked ? 'flex' : 'none';
+  });
+
+  document.querySelectorAll('.preset-btn:not(.kb-preset)').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('ka-val').value = btn.dataset.ka;
+      state.ka = parseFloat(btn.dataset.ka);
+      state.ka2 = btn.dataset.ka2 ? parseFloat(btn.dataset.ka2) : null;
+      showToast(`Set to ${btn.dataset.name}`);
+      refreshCurve();
+    });
+  });
+
+  document.querySelectorAll('.kb-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('kb-val').value = btn.dataset.kb;
+      state.kb = parseFloat(btn.dataset.kb);
+      showToast(`Set to ${btn.dataset.name}`);
+      refreshCurve();
+    });
+  });
+
+  updateDataPanel(0);
+});
