@@ -468,7 +468,7 @@ input[type="range"] {
   font-weight: bold;
 }
 
-#graph-canvas { display: block; border: 2px solid var(--border); }
+#graph-canvas { display: block; border: 2px solid var(--border); width: 100%; height: auto; }
 
 .step-box-header {
   font-family: var(--font-display);
@@ -613,7 +613,7 @@ input[type="range"] {
 }
 
 .buffer-graph-area { flex: 1; }
-#buffer-graph { border: 2px solid var(--border); }
+#buffer-graph { border: 2px solid var(--border); width: 100%; height: auto; }
 
 .buffer-stats {
   width: 200px;
@@ -741,7 +741,7 @@ input[type="range"] {
   gap: 15px;
 }
 
-#phka-graph { flex: 1; border: 2px solid var(--border); }
+#phka-graph { flex: 1; border: 2px solid var(--border); width: 100%; height: auto; }
 
 .phka-pie-wrap {
   display: flex;
