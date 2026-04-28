@@ -3,45 +3,415 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ScheFchem — AP Chemistry Interactive Learning</title>
+  <title>SchefChem - Unit 8: Acids & Bases</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <h1>ScheFchem</h1>
-      <p>AP Chemistry Interactive Learning Studio</p>
-    </div>
-    <div class="topbar-actions">
-      <button id="darkModeToggle" class="ghost-btn" aria-label="Toggle dark mode">🌙 Theme</button>
-      <span id="progressBadge" class="badge">0 / 9 complete</span>
+<body data-theme="light">
+
+  <!-- ======== HEADER / NAV ======== -->
+  <header id="site-header">
+    <div class="header-inner">
+      <div class="logo" style="cursor: pointer;" onclick="navigateTo('overview')">
+        <img src="logo.png" alt="SchefChem Logo" class="site-logo" />
+      </div>
+      <nav id="main-nav">
+        <button class="nav-btn" data-section="titration">Titration Lab</button>
+        <button class="nav-btn" data-section="buffers">Buffers</button>
+        <button class="nav-btn" data-section="ph-pka">pH &amp; pKa</button>
+      </nav>
+      <button id="theme-toggle" title="Toggle dark mode">Dark Mode</button>
     </div>
   </header>
 
-  <nav class="unit-nav" id="unitNav" aria-label="AP Chemistry Units">
-    <button class="tab active" data-unit="unit1">1. Atomic Structure & Properties</button>
-    <button class="tab" data-unit="unit2">2. Molecular & Ionic Compound Structure</button>
-    <button class="tab" data-unit="unit3">3. Intermolecular Forces & Properties</button>
-    <button class="tab" data-unit="unit4">4. Chemical Reactions</button>
-    <button class="tab" data-unit="unit5">5. Kinetics</button>
-    <button class="tab" data-unit="unit6">6. Thermodynamics</button>
-    <button class="tab" data-unit="unit7">7. Equilibrium</button>
-    <button class="tab emphasis" data-unit="unit8">8. Acids & Bases</button>
-    <button class="tab" data-unit="unit9">9. Applications of Thermodynamics</button>
-  </nav>
+  <!-- ======== MAIN CONTENT ======== -->
+  <main id="app">
 
-  <main>
-    <section id="unitContainer" class="unit-container fade-in" aria-live="polite"></section>
+    <!-- ============================
+         SECTION: OVERVIEW
+    ============================= -->
+    <section id="section-overview" class="section active">
+      <div class="section-hero">
+        <canvas id="hero-canvas"></canvas>
+        <img src="logo.png" alt="SchefChem" class="hero-logo" />
+      </div>
+
+      <div class="overview-grid">
+        <div class="overview-card" onclick="navigateTo('titration')">
+          <h3>Titration Simulator</h3>
+          <p>Add titrant drop-by-drop and watch pH change in real time. Choose SA/SB, WA/SB, or SA/WB systems.</p>
+          <span class="card-tag">Interactive Lab</span>
+        </div>
+        <div class="overview-card" onclick="navigateTo('buffers')">
+          <h3>Buffer Systems</h3>
+          <p>Explore how buffers resist pH change. Visualize the Henderson-Hasselbalch equation in action.</p>
+          <span class="card-tag">Simulation</span>
+        </div>
+        <div class="overview-card" onclick="navigateTo('ph-pka')">
+          <h3>pH &amp; pKa Relationships</h3>
+          <p>Understand how pH compares to pKa determines acid/base speciation at every point in a titration.</p>
+          <span class="card-tag">Concept Map</span>
+        </div>
+      </div>
+
+      <div class="key-concepts">
+        <h2 class="section-heading">Key Concepts at a Glance</h2>
+        <div class="concept-list">
+          <div class="concept-item">
+            <span class="concept-badge acid">Acid</span>
+            <p>A proton (H+) <strong>donor</strong>. Brønsted-Lowry definition. Strong acids fully dissociate (HCl -> H+ + Cl-). Weak acids partially dissociate.</p>
+          </div>
+          <div class="concept-item">
+            <span class="concept-badge base">Base</span>
+            <p>A proton (H+) <strong>acceptor</strong>. Strong bases (NaOH) fully dissociate. Weak bases accept protons partially (NH3 + H2O <-> NH4+ + OH-).</p>
+          </div>
+          <div class="concept-item">
+            <span class="concept-badge neutral">pH</span>
+            <p>pH = -log[H+]. Pure water at 25 C has pH = 7. Acids: pH &lt; 7. Bases: pH &gt; 7. Each unit is a <strong>10x change</strong> in [H+].</p>
+          </div>
+          <div class="concept-item">
+            <span class="concept-badge pka">Ka &amp; pKa</span>
+            <p>Ka is the acid dissociation constant. pKa = -log(Ka). Lower pKa = <strong>stronger acid</strong>. At the half-equivalence point, pH = pKa.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================
+         SECTION: TITRATION
+    ============================= -->
+    <section id="section-titration" class="section">
+      <div class="section-header">
+        <h2>Titration Simulator</h2>
+        <p>Configure your system and add titrant to explore how pH evolves.</p>
+      </div>
+
+      <div class="titration-layout">
+        <!-- LEFT: Controls -->
+        <div class="controls-panel">
+          <div class="control-group">
+            <label class="control-label">Titration Type</label>
+            <div class="type-selector">
+              <button class="type-btn active" data-type="SA_SB">SA / SB</button>
+              <button class="type-btn" data-type="WA_SB">WA / SB</button>
+              <button class="type-btn" data-type="SA_WB">SA / WB</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Analyte (in beaker)</label>
+            <div class="slider-row">
+              <label>Volume: <span id="analyte-vol-label">25</span> mL</label>
+              <input type="range" id="analyte-vol" min="1" max="200" step="1" value="25" />
+            </div>
+            <div class="slider-row">
+              <label>Concentration: <span id="analyte-conc-label">0.100</span> M</label>
+              <input type="range" id="analyte-conc" min="0.001" max="1" step="0.001" value="0.1" />
+            </div>
+          </div>
+
+          <div class="control-group" id="ka-group" style="display:none">
+            <label class="control-label">Weak Acid Ka</label>
+            <div class="input-row">
+              <div class="input-field" style="flex:1">
+                <input type="number" id="ka-val" value="0.000018" min="1e-14" max="1" step="0.000001" />
+              </div>
+            </div>
+            <div class="preset-btns">
+              <span class="preset-label">Presets:</span>
+              <button class="preset-btn" data-ka="0.000018" data-name="Acetic acid">CH3COOH (1.8x10^-5)</button>
+              <button class="preset-btn" data-ka="0.000135" data-name="Formic acid">HCOOH (1.35x10^-4)</button>
+              <button class="preset-btn" data-ka="4.3e-7" data-ka2="5.6e-11" data-name="Carbonic acid">H2CO3 (Diprotic)</button>
+              <button class="preset-btn" data-ka="0.000625" data-name="Hydrofluoric acid">HF (6.25x10^-4)</button>
+            </div>
+          </div>
+
+          <div class="control-group" id="kb-group" style="display:none">
+            <label class="control-label">Weak Base Kb</label>
+            <div class="input-row">
+              <div class="input-field" style="flex:1">
+                <input type="number" id="kb-val" value="0.0000018" min="1e-14" max="1" step="0.000001" />
+              </div>
+            </div>
+            <div class="preset-btns">
+              <span class="preset-label">Presets:</span>
+              <button class="preset-btn kb-preset" data-kb="0.0000018" data-name="Ammonia">NH3 (1.8x10^-5)</button>
+              <button class="preset-btn kb-preset" data-kb="0.000044" data-name="Methylamine">CH3NH2 (4.4x10^-4)</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Titrant</label>
+            <div class="slider-row">
+              <label>Concentration: <span id="titrant-conc-label">0.100</span> M</label>
+              <input type="range" id="titrant-conc" min="0.001" max="1" step="0.001" value="0.1" />
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Add Titrant Controls</label>
+            <div class="add-controls" style="grid-template-columns: 1fr;">
+              <button class="add-btn" id="add-drop">+ Drop</button>
+              <button class="add-btn" id="add-auto">Auto-fill</button>
+            </div>
+            <div class="slider-row">
+              <label>Drop size: <span id="drop-size-label">0.5</span> mL</label>
+              <input type="range" id="drop-size" min="0.1" max="5" step="0.1" value="0.5" />
+            </div>
+          </div>
+
+          <div class="control-group">
+            <div class="toggle-row">
+              <label class="toggle-label">Particle View</label>
+              <label class="toggle-switch">
+                <input type="checkbox" id="particle-toggle" checked />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- CENTER: Graph + Beaker -->
+        <div class="simulation-panel">
+          <!-- pH graph -->
+          <div class="graph-section">
+            <div class="graph-header">
+              <span class="graph-title">pH vs. Volume Added</span>
+              <div style="display: flex; gap: 8px;">
+                <button class="add-btn" id="undo-drop" style="padding: 4px 8px; font-size: 0.8rem;">Undo</button>
+                <button class="add-btn danger" id="reset-titration" style="padding: 4px 8px; font-size: 0.8rem;">Reset</button>
+              </div>
+            </div>
+            <canvas id="graph-canvas" width="560" height="260"></canvas>
+          </div>
+
+          <!-- Beaker visualization -->
+          <div class="beaker-section" id="beaker-section" style="justify-content: center;">
+            <div class="beaker-wrapper">
+              <canvas id="beaker-canvas" width="220" height="260"></canvas>
+              <div class="beaker-label">Beaker</div>
+            </div>
+          </div>
+
+          <!-- Explanation box -->
+          <div id="step-explanation-box" class="step-box">
+            <div class="step-box-header">What's Happening</div>
+            <div id="step-explanation-text"></div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Data Panel -->
+        <div class="data-panel">
+          <div class="data-card highlight">
+            <div class="data-label">Current pH</div>
+            <div class="data-value" id="dp-ph">-</div>
+            <div class="ph-bar-wrap"><div class="ph-bar" id="ph-bar"></div></div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">pOH</div>
+            <div class="data-value small" id="dp-poh">-</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">[H+]</div>
+            <div class="data-value small" id="dp-h">-</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">[OH-]</div>
+            <div class="data-value small" id="dp-oh">-</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">Vol. Added</div>
+            <div class="data-value small" id="dp-vol">0.0 mL</div>
+          </div>
+          <div class="data-card" id="dp-eq-card" style="display:none">
+            <div class="data-label">Equivalence Point</div>
+            <div class="data-value small" id="dp-eq">-</div>
+          </div>
+          <div class="data-card" id="dp-heq-card" style="display:none">
+            <div class="data-label">Half-Equiv. Point</div>
+            <div class="data-value small" id="dp-heq">- (pH = pKa)</div>
+          </div>
+          <div class="data-card" id="dp-buffer-card" style="display:none">
+            <div class="data-label">Buffer Region</div>
+            <div class="data-value small" id="dp-buffer">-</div>
+          </div>
+          <div class="data-card species-card">
+            <div class="data-label">Species Concentrations</div>
+            <div class="species-list" id="species-list">
+              <div class="species-row"><span>-</span><span>-</span></div>
+            </div>
+          </div>
+
+          <div class="hh-card" id="hh-card" style="display:none">
+            <div class="hh-title">Henderson-Hasselbalch</div>
+            <div class="hh-eq">pH = pKa + log([A-]/[HA])</div>
+            <div class="hh-values" id="hh-values"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================
+         SECTION: BUFFERS
+    ============================= -->
+    <section id="section-buffers" class="section">
+      <div class="section-header">
+        <h2>Buffer Systems</h2>
+        <p>Buffers resist pH change. Explore how adding acid or base to a buffer affects pH and why it barely budges near the pKa.</p>
+      </div>
+
+      <div class="buffer-layout">
+        <div class="buffer-controls">
+          <div class="control-group">
+            <label class="control-label">Select Buffer System</label>
+            <select id="buffer-system">
+              <option value="acetate">Acetic Acid / Acetate (pKa 4.76)</option>
+              <option value="phosphate">Phosphate (pKa 7.20)</option>
+              <option value="carbonate">Carbonate (pKa 10.33)</option>
+              <option value="ammonia">Ammonia / Ammonium (pKa 9.25)</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+
+          <div class="control-group" id="custom-pka-group" style="display:none">
+            <label class="control-label">Custom pKa</label>
+            <input type="number" id="custom-pka" value="7.0" min="0" max="14" step="0.01"/>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Initial Concentrations</label>
+            <div class="input-row">
+              <div class="input-field">
+                <label>[HA] (M)</label>
+                <input type="number" id="buf-ha" value="0.1" min="0.001" max="5" step="0.01" />
+              </div>
+              <div class="input-field">
+                <label>[A-] (M)</label>
+                <input type="number" id="buf-a" value="0.1" min="0.001" max="5" step="0.01" />
+              </div>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Volume of Buffer (mL)</label>
+            <input type="number" id="buf-vol" value="100" min="10" max="1000" step="10"/>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Add to Buffer</label>
+            <div class="add-controls">
+              <button class="add-btn" onclick="addToBuffer('acid', 1)">+ 1 mL Strong Acid</button>
+              <button class="add-btn" onclick="addToBuffer('base', 1)">+ 1 mL Strong Base</button>
+              <button class="add-btn danger" onclick="resetBuffer()" style="grid-column: span 2;">Reset Buffer</button>
+            </div>
+            <div class="slider-row">
+              <label>Amount: <span id="buf-add-label">1</span> mL <span id="buf-add-conc-label">0.1</span> M</label>
+              <input type="range" id="buf-add-amount" min="0.1" max="20" step="0.1" value="1" />
+            </div>
+            <div class="slider-row" style="margin-top:6px">
+              <label>Concentration of added reagent (M):</label>
+              <input type="number" id="buf-add-conc" value="0.1" min="0.001" max="5" step="0.001"/>
+            </div>
+          </div>
+        </div>
+
+        <div class="buffer-sim">
+          <div class="buffer-graph-area">
+            <canvas id="buffer-graph" width="520" height="300"></canvas>
+          </div>
+          <div class="buffer-stats">
+            <div class="stat-row"><span>Current pH</span><strong id="buf-ph">-</strong></div>
+            <div class="stat-row"><span>pKa</span><strong id="buf-pka">-</strong></div>
+            <div class="stat-row"><span>[HA]</span><strong id="buf-ha-val">-</strong></div>
+            <div class="stat-row"><span>[A-]</span><strong id="buf-a-val">-</strong></div>
+            <div class="stat-row"><span>[A-]/[HA]</span><strong id="buf-ratio">-</strong></div>
+            <div class="hh-card" style="margin-top:12px">
+              <div class="hh-title">Henderson-Hasselbalch</div>
+              <div class="hh-eq">pH = pKa + log([A-]/[HA])</div>
+              <div class="hh-values" id="buf-hh-values" style="font-size:0.8rem;margin-top:6px"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="buffer-concept">
+          <h3>Why Buffers Work</h3>
+          <div class="concept-explain">
+            <p>A buffer contains a <strong>weak acid (HA)</strong> and its <strong>conjugate base (A-)</strong> in significant amounts. When you add strong acid (H+), the base A- absorbs it:</p>
+            <div class="rxn-box">A- + H+ -> HA</div>
+            <p>When you add strong base (OH-), the weak acid donates a proton:</p>
+            <div class="rxn-box">HA + OH- -> A- + H2O</div>
+            <p>The buffer works best within <strong>1 pH unit of the pKa</strong>.</p>
+          </div>
+          <div class="capacity-meter">
+            <div class="cap-label">Buffer Capacity Remaining</div>
+            <div class="cap-bar-wrap"><div class="cap-bar" id="cap-bar"></div></div>
+            <div class="cap-text" id="cap-text">100%</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================
+         SECTION: pH & pKa
+    ============================= -->
+    <section id="section-ph-pka" class="section">
+      <div class="section-header">
+        <h2>pH &amp; pKa Relationships</h2>
+        <p>Explore how the ratio of acid to conjugate base depends on pH vs pKa.</p>
+      </div>
+
+      <div class="phka-layout">
+        <div class="phka-controls">
+          <div class="control-group">
+            <label class="control-label">pKa of Weak Acid</label>
+            <input type="range" id="phka-pka" min="0" max="14" step="0.01" value="4.76"/>
+            <div class="range-value">pKa = <span id="phka-pka-val">4.76</span></div>
+          </div>
+          <div class="control-group">
+            <label class="control-label">Solution pH</label>
+            <input type="range" id="phka-ph" min="0" max="14" step="0.01" value="4.76"/>
+            <div class="range-value">pH = <span id="phka-ph-val">4.76</span></div>
+          </div>
+          <div class="phka-result-card">
+            <div class="phka-comparison" id="phka-comparison">pH = pKa</div>
+            <div class="phka-fractions" id="phka-fractions"></div>
+            <div class="phka-label-explain" id="phka-label-explain"></div>
+          </div>
+        </div>
+
+        <div class="phka-visuals">
+          <canvas id="phka-graph" width="520" height="300"></canvas>
+          <div class="phka-pie-wrap">
+            <canvas id="phka-pie" width="200" height="200"></canvas>
+            <div class="pie-legend" id="pie-legend"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="phka-table-section">
+        <h3>Speciation Summary Table</h3>
+        <table class="spec-table" id="spec-table">
+          <thead>
+            <tr>
+              <th>pH Relative to pKa</th>
+              <th>Dominant Form</th>
+              <th>log([A-]/[HA])</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="spec-row-acid"><td>pH &lt;&lt; pKa (e.g., pH = pKa - 2)</td><td>HA dominates</td><td>-2</td><td>99% in acid form</td></tr>
+            <tr class="spec-row-mid"><td>pH = pKa - 1</td><td>Mostly HA</td><td>-1</td><td>~91% acid, 9% base</td></tr>
+            <tr class="spec-row-eq"><td>pH = pKa</td><td>Equal (50/50)</td><td>0</td><td>Buffer midpoint</td></tr>
+            <tr class="spec-row-mid2"><td>pH = pKa + 1</td><td>Mostly A-</td><td>+1</td><td>~91% base, 9% acid</td></tr>
+            <tr class="spec-row-base"><td>pH &gt;&gt; pKa (e.g., pH = pKa + 2)</td><td>A- dominates</td><td>+2</td><td>99% in base form</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 
-  <template id="quizTemplate">
-    <section class="card quiz-card">
-      <h3>Quick Check</h3>
-      <p class="quiz-question"></p>
-      <div class="quiz-options"></div>
-      <p class="quiz-feedback"></p>
-    </section>
-  </template>
+  <div id="toast" class="toast"></div>
 
   <script src="script.js"></script>
 </body>
