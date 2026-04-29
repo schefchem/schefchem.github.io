@@ -22,6 +22,7 @@ function navigateTo(sectionId) {
 
   if (sectionId === 'buffers' && !bufferInitialized) initBuffer();
   if (sectionId === 'ph-pka' && !phkaInitialized) initPhKa();
+  if (sectionId === 'galvanic' && !galvanicInitialized) initGalvanic();
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -45,6 +46,7 @@ themeToggle.addEventListener('click', () => {
   drawBeaker();
   if (bufferInitialized) drawBufferGraph();
   if (phkaInitialized) drawPhKaGraph(), drawPie();
+  if (galvanicInitialized) drawGalvanicScene();
 });
 
 function showToast(msg, duration = 2500) {
@@ -1413,6 +1415,444 @@ function updatePhKaCard() {
   document.getElementById('phka-fractions').innerHTML =
     `[HA] = ${fHA}% [A-] = ${fA}%<br>log([A-]/[HA]) = ${diff.toFixed(3)}`;
   document.getElementById('phka-label-explain').textContent = explain;
+}
+
+let galvanicInitialized = false;
+let galvanicCanvas, galvanicCtx;
+
+const GALVANIC_CONSTANTS = {
+  anode: { name: 'Zn', ion: 'Zn2+', molarMass: 65.38, e0: -0.76 },
+  cathode: { name: 'Cu', ion: 'Cu2+', molarMass: 63.55, e0: 0.34 },
+  n: 2,
+  faraday: 96485,
+};
+
+const galvanicState = {
+  running: false,
+  locked: false,
+  status: 'ready',
+  time: 0,
+  vol: 0.1,
+  zn2Moles: 0.1,
+  cu2Moles: 0.1,
+  znMoles: 0.05,
+  cuMoles: 0.05,
+  electronsMoved: 0,
+  anionsMoved: 0,
+  cationsMoved: 0,
+  speed: 1,
+  baseRate: 0.003,
+  tickInterval: null,
+  pendingElectrons: 0,
+  pendingAnions: 0,
+  pendingCations: 0,
+};
+
+const galvanicParticles = {
+  electrons: [],
+  ions: [],
+};
+
+function galvanicLayout() {
+  const W = galvanicCanvas.width;
+  const H = galvanicCanvas.height;
+  const beakerW = 180;
+  const beakerH = 170;
+  const topY = 110;
+  const leftX = 50;
+  const rightX = W - beakerW - 50;
+  const solutionH = 115;
+  const wireY = 70;
+  const leftElectrodeX = leftX + beakerW * 0.35;
+  const rightElectrodeX = rightX + beakerW * 0.65;
+  const bridgeStart = { x: leftX + beakerW - 8, y: topY + beakerH * 0.55 };
+  const bridgeEnd = { x: rightX + 8, y: topY + beakerH * 0.55 };
+  const bridgeTopY = topY - 18;
+
+  return {
+    W,
+    H,
+    beakerW,
+    beakerH,
+    topY,
+    leftX,
+    rightX,
+    solutionH,
+    wireY,
+    leftElectrodeX,
+    rightElectrodeX,
+    bridgeStart,
+    bridgeEnd,
+    bridgeTopY,
+  };
+}
+
+function saltBridgePoint(t) {
+  const layout = galvanicLayout();
+  const start = layout.bridgeStart;
+  const end = layout.bridgeEnd;
+  const topY = layout.bridgeTopY;
+  const upT = 0.3;
+  const acrossT = 0.7;
+  if (t <= upT) {
+    const local = t / upT;
+    return { x: start.x, y: start.y - local * (start.y - topY) };
+  }
+  if (t <= acrossT) {
+    const local = (t - upT) / (acrossT - upT);
+    return { x: start.x + local * (end.x - start.x), y: topY };
+  }
+  const local = (t - acrossT) / (1 - acrossT);
+  return { x: end.x, y: topY + local * (end.y - topY) };
+}
+
+function setGalvanicInputsDisabled(disabled) {
+  ['zn-conc', 'cu-conc', 'cell-vol', 'zn-mass', 'cu-mass'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+function readGalvanicInputs() {
+  const znConc = parseFloat(document.getElementById('zn-conc').value) || 1;
+  const cuConc = parseFloat(document.getElementById('cu-conc').value) || 1;
+  const volML = parseFloat(document.getElementById('cell-vol').value) || 100;
+  const znMass = parseFloat(document.getElementById('zn-mass').value) || 5;
+  const cuMass = parseFloat(document.getElementById('cu-mass').value) || 5;
+
+  galvanicState.vol = Math.max(0.01, volML / 1000);
+  galvanicState.zn2Moles = Math.max(0, znConc) * galvanicState.vol;
+  galvanicState.cu2Moles = Math.max(0, cuConc) * galvanicState.vol;
+  galvanicState.znMoles = Math.max(0, znMass) / GALVANIC_CONSTANTS.anode.molarMass;
+  galvanicState.cuMoles = Math.max(0, cuMass) / GALVANIC_CONSTANTS.cathode.molarMass;
+
+  galvanicState.time = 0;
+  galvanicState.electronsMoved = 0;
+  galvanicState.anionsMoved = 0;
+  galvanicState.cationsMoved = 0;
+  galvanicState.pendingElectrons = 0;
+  galvanicState.pendingAnions = 0;
+  galvanicState.pendingCations = 0;
+  galvanicState.status = 'ready';
+  galvanicParticles.electrons.length = 0;
+  galvanicParticles.ions.length = 0;
+}
+
+function computeEcell() {
+  const znConc = Math.max(1e-9, galvanicState.zn2Moles / galvanicState.vol);
+  const cuConc = Math.max(1e-9, galvanicState.cu2Moles / galvanicState.vol);
+  const Q = znConc / cuConc;
+  const E0 = GALVANIC_CONSTANTS.cathode.e0 - GALVANIC_CONSTANTS.anode.e0;
+  return E0 - (0.0592 / GALVANIC_CONSTANTS.n) * Math.log10(Q);
+}
+
+function galvanicStatusText() {
+  const znConc = (galvanicState.zn2Moles / galvanicState.vol).toFixed(3);
+  const cuConc = (galvanicState.cu2Moles / galvanicState.vol).toFixed(3);
+  if (!galvanicState.locked) {
+    return `Set the half-cell concentrations, then start the reaction. Zn is oxidized at the anode, Cu2+ is reduced at the cathode.`;
+  }
+  if (galvanicState.running) {
+    return `Electrons flow from Zn → Cu. [Zn2+] rises (${znConc} M) while [Cu2+] drops (${cuConc} M). Salt bridge ions migrate to maintain charge balance.`;
+  }
+  if (galvanicState.status === 'equilibrium') {
+    return 'The cell has reached equilibrium (Ecell ≈ 0). Reset to change starting concentrations.';
+  }
+  if (galvanicState.status === 'depleted') {
+    return 'A reactant is depleted. Reset to recharge the galvanic cell.';
+  }
+  return 'Simulation paused. Resume the reaction or reset the cell to change inputs.';
+}
+
+function updateGalvanicDisplay() {
+  const eCell = computeEcell();
+  const znConc = galvanicState.zn2Moles / galvanicState.vol;
+  const cuConc = galvanicState.cu2Moles / galvanicState.vol;
+  const znMass = galvanicState.znMoles * GALVANIC_CONSTANTS.anode.molarMass;
+  const cuMass = galvanicState.cuMoles * GALVANIC_CONSTANTS.cathode.molarMass;
+  const Q = znConc / Math.max(1e-9, cuConc);
+
+  document.getElementById('gc-ecell').textContent = `${eCell.toFixed(3)} V`;
+  document.getElementById('gc-time').textContent = `${galvanicState.time.toFixed(1)} s`;
+  document.getElementById('gc-zn-mass').textContent = `${znMass.toFixed(3)} g`;
+  document.getElementById('gc-cu-mass').textContent = `${cuMass.toFixed(3)} g`;
+  document.getElementById('gc-zn-conc').textContent = `${znConc.toFixed(3)} M`;
+  document.getElementById('gc-cu-conc').textContent = `${cuConc.toFixed(3)} M`;
+  document.getElementById('gc-charge').textContent = `${(galvanicState.electronsMoved * GALVANIC_CONSTANTS.faraday).toFixed(1)} C`;
+  document.getElementById('gc-ions').textContent = `K+ ${galvanicState.cationsMoved.toFixed(4)} mol | NO3- ${galvanicState.anionsMoved.toFixed(4)} mol`;
+  document.getElementById('gc-q').textContent = Q.toExponential(2);
+
+  const explainEl = document.getElementById('galvanic-explanation-text');
+  if (explainEl) explainEl.textContent = galvanicStatusText();
+}
+
+function startGalvanic() {
+  if (galvanicState.running) return;
+  if (!galvanicState.locked) readGalvanicInputs();
+  galvanicState.running = true;
+  galvanicState.locked = true;
+  galvanicState.status = 'running';
+  setGalvanicInputsDisabled(true);
+  const toggleBtn = document.getElementById('galvanic-toggle');
+  if (toggleBtn) toggleBtn.textContent = 'Pause Reaction';
+  galvanicState.tickInterval = setInterval(() => stepGalvanic(0.12), 120);
+  updateGalvanicDisplay();
+}
+
+function pauseGalvanic() {
+  galvanicState.running = false;
+  galvanicState.status = 'paused';
+  if (galvanicState.tickInterval) {
+    clearInterval(galvanicState.tickInterval);
+    galvanicState.tickInterval = null;
+  }
+  const toggleBtn = document.getElementById('galvanic-toggle');
+  if (toggleBtn) toggleBtn.textContent = 'Resume Reaction';
+  updateGalvanicDisplay();
+}
+
+function stopGalvanic(status) {
+  galvanicState.running = false;
+  galvanicState.status = status;
+  if (galvanicState.tickInterval) {
+    clearInterval(galvanicState.tickInterval);
+    galvanicState.tickInterval = null;
+  }
+  const toggleBtn = document.getElementById('galvanic-toggle');
+  if (toggleBtn) toggleBtn.textContent = 'Resume Reaction';
+  updateGalvanicDisplay();
+}
+
+function resetGalvanic() {
+  if (galvanicState.tickInterval) {
+    clearInterval(galvanicState.tickInterval);
+    galvanicState.tickInterval = null;
+  }
+  galvanicState.running = false;
+  galvanicState.locked = false;
+  galvanicState.status = 'ready';
+  setGalvanicInputsDisabled(false);
+  const toggleBtn = document.getElementById('galvanic-toggle');
+  if (toggleBtn) toggleBtn.textContent = 'Start Reaction';
+  readGalvanicInputs();
+  updateGalvanicDisplay();
+  drawGalvanicScene();
+}
+
+function stepGalvanic(dt) {
+  const eCell = computeEcell();
+  if (eCell <= 0) {
+    stopGalvanic('equilibrium');
+    showToast('Cell reached equilibrium (Ecell ≈ 0).');
+    return;
+  }
+
+  const rate = galvanicState.baseRate * galvanicState.speed * eCell;
+  let reactionMoles = rate * dt;
+  const maxMoles = Math.min(galvanicState.znMoles, galvanicState.cu2Moles);
+  reactionMoles = Math.min(reactionMoles, maxMoles);
+
+  if (reactionMoles <= 0) {
+    stopGalvanic('depleted');
+    showToast('Reaction stopped. A reactant is depleted.');
+    return;
+  }
+
+  galvanicState.znMoles -= reactionMoles;
+  galvanicState.cu2Moles -= reactionMoles;
+  galvanicState.zn2Moles += reactionMoles;
+  galvanicState.cuMoles += reactionMoles;
+
+  galvanicState.electronsMoved += reactionMoles * GALVANIC_CONSTANTS.n;
+  galvanicState.cationsMoved += reactionMoles * GALVANIC_CONSTANTS.n;
+  galvanicState.anionsMoved += reactionMoles * GALVANIC_CONSTANTS.n;
+
+  galvanicState.pendingElectrons += reactionMoles * 2000;
+  galvanicState.pendingCations += reactionMoles * 1200;
+  galvanicState.pendingAnions += reactionMoles * 1200;
+
+  galvanicState.time += dt;
+  updateGalvanicDisplay();
+}
+
+function drawGalvanicScene() {
+  if (!galvanicCtx) return;
+  const ctx = galvanicCtx;
+  const layout = galvanicLayout();
+  const dark = isDark;
+
+  ctx.clearRect(0, 0, layout.W, layout.H);
+  ctx.fillStyle = dark ? '#2b2b2b' : '#ffffff';
+  ctx.fillRect(0, 0, layout.W, layout.H);
+
+  const znConc = galvanicState.zn2Moles / galvanicState.vol;
+  const cuConc = galvanicState.cu2Moles / galvanicState.vol;
+  const znAlpha = Math.min(0.85, 0.25 + znConc / 4);
+  const cuAlpha = Math.min(0.85, 0.25 + cuConc / 4);
+
+  ctx.strokeStyle = dark ? '#dddddd' : '#222222';
+  ctx.lineWidth = 2;
+
+  ctx.strokeRect(layout.leftX, layout.topY, layout.beakerW, layout.beakerH);
+  ctx.strokeRect(layout.rightX, layout.topY, layout.beakerW, layout.beakerH);
+
+  ctx.fillStyle = `rgba(130,150,170,${znAlpha})`;
+  ctx.fillRect(layout.leftX + 2, layout.topY + layout.beakerH - layout.solutionH, layout.beakerW - 4, layout.solutionH - 2);
+  ctx.fillStyle = `rgba(80,140,235,${cuAlpha})`;
+  ctx.fillRect(layout.rightX + 2, layout.topY + layout.beakerH - layout.solutionH, layout.beakerW - 4, layout.solutionH - 2);
+
+  ctx.fillStyle = dark ? '#dddddd' : '#222222';
+  ctx.fillRect(layout.leftElectrodeX - 6, layout.topY + 20, 12, layout.beakerH - 40);
+  ctx.fillRect(layout.rightElectrodeX - 6, layout.topY + 20, 12, layout.beakerH - 40);
+
+  ctx.strokeStyle = dark ? '#bbbbbb' : '#111111';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(layout.leftElectrodeX, layout.wireY);
+  ctx.lineTo(layout.rightElectrodeX, layout.wireY);
+  ctx.stroke();
+
+  ctx.fillStyle = dark ? '#bbbbbb' : '#111111';
+  ctx.beginPath();
+  ctx.moveTo(layout.rightElectrodeX - 8, layout.wireY - 6);
+  ctx.lineTo(layout.rightElectrodeX + 6, layout.wireY);
+  ctx.lineTo(layout.rightElectrodeX - 8, layout.wireY + 6);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = dark ? '#bbbbbb' : '#111111';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(layout.bridgeStart.x, layout.bridgeStart.y);
+  ctx.lineTo(layout.bridgeStart.x, layout.bridgeTopY);
+  ctx.lineTo(layout.bridgeEnd.x, layout.bridgeTopY);
+  ctx.lineTo(layout.bridgeEnd.x, layout.bridgeEnd.y);
+  ctx.stroke();
+
+  galvanicParticles.electrons.forEach(e => {
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffdd55';
+    ctx.fill();
+    ctx.strokeStyle = dark ? '#111111' : '#222222';
+    ctx.stroke();
+  });
+
+  galvanicParticles.ions.forEach(ion => {
+    const pt = saltBridgePoint(ion.t);
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = ion.type === 'cation' ? '#bb66ff' : '#55cc55';
+    ctx.fill();
+    ctx.strokeStyle = dark ? '#111111' : '#222222';
+    ctx.stroke();
+  });
+
+  ctx.fillStyle = dark ? '#eeeeee' : '#111111';
+  ctx.font = 'bold 12px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Anode (Zn)', layout.leftX + layout.beakerW / 2, layout.topY - 10);
+  ctx.fillText('Cathode (Cu)', layout.rightX + layout.beakerW / 2, layout.topY - 10);
+
+  ctx.font = '11px Courier New, monospace';
+  ctx.fillText(`[Zn2+] ${znConc.toFixed(2)} M`, layout.leftX + layout.beakerW / 2, layout.topY + layout.beakerH + 16);
+  ctx.fillText(`[Cu2+] ${cuConc.toFixed(2)} M`, layout.rightX + layout.beakerW / 2, layout.topY + layout.beakerH + 16);
+
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'left';
+  ctx.fillText('e- flow →', layout.leftElectrodeX + 5, layout.wireY - 8);
+  ctx.fillText('Salt bridge ions', layout.bridgeStart.x - 10, layout.bridgeTopY - 8);
+}
+
+function animateGalvanic() {
+  if (!galvanicCtx) return;
+  const layout = galvanicLayout();
+  const electronSpeed = 1.4 * galvanicState.speed;
+  const ionSpeed = 0.004 * galvanicState.speed;
+
+  const spawnElectrons = Math.floor(galvanicState.pendingElectrons);
+  if (spawnElectrons > 0) {
+    galvanicState.pendingElectrons -= spawnElectrons;
+    for (let i = 0; i < spawnElectrons; i++) {
+      galvanicParticles.electrons.push({ x: layout.leftElectrodeX, y: layout.wireY });
+    }
+  }
+
+  const spawnCations = Math.floor(galvanicState.pendingCations);
+  if (spawnCations > 0) {
+    galvanicState.pendingCations -= spawnCations;
+    for (let i = 0; i < spawnCations; i++) {
+      galvanicParticles.ions.push({ type: 'cation', t: 0, dir: 1 });
+    }
+  }
+
+  const spawnAnions = Math.floor(galvanicState.pendingAnions);
+  if (spawnAnions > 0) {
+    galvanicState.pendingAnions -= spawnAnions;
+    for (let i = 0; i < spawnAnions; i++) {
+      galvanicParticles.ions.push({ type: 'anion', t: 1, dir: -1 });
+    }
+  }
+
+  galvanicParticles.electrons.forEach(e => {
+    e.x += electronSpeed;
+  });
+  galvanicParticles.ions.forEach(ion => {
+    ion.t += ionSpeed * ion.dir;
+  });
+
+  galvanicParticles.electrons = galvanicParticles.electrons.filter(e => e.x < layout.rightElectrodeX + 10);
+  galvanicParticles.ions = galvanicParticles.ions.filter(ion => ion.t >= 0 && ion.t <= 1);
+
+  drawGalvanicScene();
+  requestAnimationFrame(animateGalvanic);
+}
+
+function initGalvanic() {
+  galvanicInitialized = true;
+  galvanicCanvas = document.getElementById('galvanic-canvas');
+  if (!galvanicCanvas) return;
+  galvanicCtx = galvanicCanvas.getContext('2d');
+
+  const speedEl = document.getElementById('galvanic-speed');
+  if (speedEl) {
+    galvanicState.speed = parseFloat(speedEl.value) || 1;
+    document.getElementById('galvanic-speed-label').textContent = galvanicState.speed.toFixed(1);
+    speedEl.addEventListener('input', e => {
+      galvanicState.speed = parseFloat(e.target.value) || 1;
+      document.getElementById('galvanic-speed-label').textContent = galvanicState.speed.toFixed(1);
+    });
+  }
+
+  ['zn-conc', 'cu-conc', 'cell-vol', 'zn-mass', 'cu-mass'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      if (galvanicState.locked) {
+        showToast('Reset the cell to change concentrations.');
+        el.value = el.defaultValue;
+        return;
+      }
+      readGalvanicInputs();
+      updateGalvanicDisplay();
+      drawGalvanicScene();
+    });
+  });
+
+  document.getElementById('galvanic-toggle').addEventListener('click', () => {
+    if (galvanicState.running) {
+      pauseGalvanic();
+    } else {
+      startGalvanic();
+    }
+  });
+
+  document.getElementById('galvanic-reset').addEventListener('click', resetGalvanic);
+
+  readGalvanicInputs();
+  updateGalvanicDisplay();
+  drawGalvanicScene();
+  requestAnimationFrame(animateGalvanic);
 }
 
 function initHeroCanvas() {
