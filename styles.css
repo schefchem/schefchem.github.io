@@ -310,6 +310,13 @@ input, select { font-family: var(--font-body); }
   align-items: start;
 }
 
+.galvanic-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr 220px;
+  gap: 20px;
+  align-items: start;
+}
+
 .controls-panel {
   background: var(--surface);
   border: 2px solid var(--border);
@@ -487,6 +494,14 @@ input[type="range"] {
 }
 
 #graph-canvas { display: block; border: 2px solid var(--border); width: 100%; height: auto; }
+#galvanic-canvas { display: block; border: 2px solid var(--border); width: 100%; height: auto; }
+
+.galvanic-diagram {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  padding: 15px;
+  box-shadow: var(--shadow);
+}
 
 .step-box-header {
   font-family: var(--font-display);
@@ -823,10 +838,13 @@ input[type="range"] {
   .titration-layout {
     grid-template-columns: 240px 1fr 200px;
   }
+  .galvanic-layout {
+    grid-template-columns: 240px 1fr 200px;
+  }
 }
 
 @media (max-width: 900px) {
-  .titration-layout, .buffer-layout, .phka-layout, .overview-grid, .concept-list, .section-hero {
+  .titration-layout, .galvanic-layout, .buffer-layout, .phka-layout, .overview-grid, .concept-list, .section-hero {
     grid-template-columns: 1fr;
   }
   .buffer-controls { grid-row: auto; }
