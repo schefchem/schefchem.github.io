@@ -24,6 +24,7 @@
         <button class="nav-btn" data-section="titration">Titration Lab</button>
         <button class="nav-btn" data-section="buffers">Buffers</button>
         <button class="nav-btn" data-section="ph-pka">pH &amp; pKa</button>
+        <button class="nav-btn" data-section="galvanic">Galvanic Cell</button>
       </nav>
       <button id="theme-toggle" title="Toggle dark mode">Dark Mode</button>
     </div>
@@ -48,6 +49,10 @@
         </div>
         <div class="overview-card" onclick="navigateTo('ph-pka')">
           <h3>pH &amp; pKa Relationships</h3>
+          <span class="card-tag">Go ➜</span>
+        </div>
+        <div class="overview-card" onclick="navigateTo('galvanic')">
+          <h3>Galvanic Cell</h3>
           <span class="card-tag">Go ➜</span>
         </div>
       </div>
@@ -389,6 +394,125 @@
             <tr class="spec-row-base"><td>pH &gt;&gt; pKa (e.g., pH = pKa + 2)</td><td>A- dominates</td><td>+2</td><td>99% in base form</td></tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <section id="section-galvanic" class="section">
+      <div class="section-header">
+        <h2>Galvanic Cell</h2>
+        <p>Track electron flow, changing electrode mass, and ion migration in a Zn/Cu galvanic cell.</p>
+      </div>
+
+      <div class="galvanic-layout">
+        <div class="controls-panel">
+          <div class="control-group">
+            <label class="control-label">Cell Setup</label>
+            <div class="input-row">
+              <div class="input-field">
+                <label>[Zn²⁺] (M) – Anode</label>
+                <input type="number" id="zn-conc" value="1.0" min="0.01" max="5" step="0.01" />
+              </div>
+              <div class="input-field">
+                <label>[Cu²⁺] (M) – Cathode</label>
+                <input type="number" id="cu-conc" value="1.0" min="0.01" max="5" step="0.01" />
+              </div>
+            </div>
+            <div class="input-row">
+              <div class="input-field">
+                <label>Half-cell Volume (mL)</label>
+                <input type="number" id="cell-vol" value="100" min="20" max="500" step="10" />
+              </div>
+              <div class="input-field">
+                <label>Zn Mass (g)</label>
+                <input type="number" id="zn-mass" value="5.0" min="1" max="50" step="0.1" />
+              </div>
+              <div class="input-field">
+                <label>Cu Mass (g)</label>
+                <input type="number" id="cu-mass" value="5.0" min="1" max="50" step="0.1" />
+              </div>
+            </div>
+            <div class="input-row">
+              <div class="input-field" style="flex:1;">
+                <label>Salt Bridge</label>
+                <select id="salt-bridge-select">
+                  <option value="KNO3">KNO₃ (K⁺ / NO₃⁻)</option>
+                  <option value="NaCl">NaCl (Na⁺ / Cl⁻)</option>
+                  <option value="KCl">KCl (K⁺ / Cl⁻)</option>
+                  <option value="NH4NO3">NH₄NO₃ (NH₄⁺ / NO₃⁻)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Reaction Controls</label>
+            <div class="add-controls">
+              <button class="add-btn" id="galvanic-toggle">Start Reaction</button>
+              <button class="add-btn danger" id="galvanic-reset">Reset Cell</button>
+            </div>
+            <div class="slider-row">
+              <label>Speed: <span id="galvanic-speed-label">1.0</span>x</label>
+              <input type="range" id="galvanic-speed" min="0.5" max="3" step="0.1" value="1" />
+            </div>
+          </div>
+
+          <div class="control-group">
+            <label class="control-label">Cell Summary</label>
+            <div class="rxn-box">Zn(s) + Cu²⁺(aq) → Zn²⁺(aq) + Cu(s)</div>
+            <div class="rxn-box">Anode: Zn(s) → Zn²⁺(aq) + 2e⁻</div>
+            <div class="rxn-box">Cathode: Cu²⁺(aq) + 2e⁻ → Cu(s)</div>
+            <div class="rxn-box" id="salt-bridge-rxn-box">Salt bridge: KNO₃ (K⁺ → cathode, NO₃⁻ → anode)</div>
+          </div>
+        </div>
+
+        <div class="simulation-panel">
+          <div class="galvanic-diagram">
+            <canvas id="galvanic-canvas" width="700" height="380"></canvas>
+          </div>
+          <div id="galvanic-explanation-box" class="step-box">
+            <div class="step-box-header">What's Happening</div>
+            <div id="galvanic-explanation-text"></div>
+          </div>
+        </div>
+
+        <div class="data-panel">
+          <div class="data-card highlight">
+            <div class="data-label">Cell Potential (E<sub>cell</sub>)</div>
+            <div class="data-value" id="gc-ecell">–</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">Time Elapsed</div>
+            <div class="data-value small" id="gc-time">0.0 s</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">Zn Electrode Mass</div>
+            <div class="data-value small" id="gc-zn-mass">–</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">Cu Electrode Mass</div>
+            <div class="data-value small" id="gc-cu-mass">–</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">[Zn²⁺] (Anode)</div>
+            <div class="data-value small" id="gc-zn-conc">–</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">[Cu²⁺] (Cathode)</div>
+            <div class="data-value small" id="gc-cu-conc">–</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">Charge Moved</div>
+            <div class="data-value small" id="gc-charge">–</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">Salt Bridge Ions</div>
+            <div class="data-value small" id="gc-ions">–</div>
+          </div>
+          <div class="data-card">
+            <div class="data-label">Reaction Quotient (Q)</div>
+            <div class="data-value small" id="gc-q">–</div>
+          </div>
+        </div>
       </div>
     </section>
 

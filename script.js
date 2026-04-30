@@ -22,6 +22,7 @@ function navigateTo(sectionId) {
 
   if (sectionId === 'buffers' && !bufferInitialized) initBuffer();
   if (sectionId === 'ph-pka' && !phkaInitialized) initPhKa();
+  if (sectionId === 'galvanic' && !galvanicInitialized) initGalvanic();
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -45,6 +46,7 @@ themeToggle.addEventListener('click', () => {
   drawBeaker();
   if (bufferInitialized) drawBufferGraph();
   if (phkaInitialized) drawPhKaGraph(), drawPie();
+  if (galvanicInitialized) drawGalvanicScene();
 });
 
 function showToast(msg, duration = 2500) {
@@ -1589,3 +1591,703 @@ document.addEventListener('DOMContentLoaded', () => {
 
   updateDataPanel(0);
 });
+
+/* ============================================================
+   Galvanic Cell Simulation
+   ============================================================ */
+
+// ── Salt bridge options ─────────────────────────────────────
+const SALT_BRIDGES = {
+  KNO3:   { cation: 'K⁺',   anion: 'NO₃⁻', label: 'KNO₃ (K⁺ → cathode, NO₃⁻ → anode)' },
+  NaCl:   { cation: 'Na⁺',  anion: 'Cl⁻',  label: 'NaCl (Na⁺ → cathode, Cl⁻ → anode)' },
+  KCl:    { cation: 'K⁺',   anion: 'Cl⁻',  label: 'KCl (K⁺ → cathode, Cl⁻ → anode)' },
+  NH4NO3: { cation: 'NH₄⁺', anion: 'NO₃⁻', label: 'NH₄NO₃ (NH₄⁺ → cathode, NO₃⁻ → anode)' },
+};
+
+// ── Half-cell constants ──────────────────────────────────────
+const GALVANIC_CONSTANTS = {
+  anode:   { name: 'Zn', ion: 'Zn²⁺', molarMass: 65.38,  e0: -0.76, n: 2 },
+  cathode: { name: 'Cu', ion: 'Cu²⁺', molarMass: 63.55,  e0:  0.34, n: 2 },
+  faraday: 96485,
+};
+
+// ── Math helpers ─────────────────────────────────────────────
+function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
+function lcm(a, b) { return (a * b) / gcd(a, b); }
+
+// ── State ────────────────────────────────────────────────────
+let galvanicInitialized = false;
+let galvanicCanvas, galvanicCtx;
+let galvanicAnimFrame = null;
+
+const galvanicState = {
+  running: false,
+  locked:  false,
+  status:  'ready',
+  time:    0,
+  vol:     0.1,
+  zn2Moles: 0.1,
+  cu2Moles: 0.1,
+  znMoles:  0.05,
+  cuMoles:  0.05,
+  znMassInit: 5,
+  cuMassInit: 5,
+  electronsMoved: 0,
+  anionsMoved:    0,
+  cationsMoved:   0,
+  speed:    1,
+  baseRate: 0.003,
+  tickInterval: null,
+  pendingElectrons: 0,
+  pendingAnions:    0,
+  pendingCations:   0,
+  saltBridge: 'KNO3',
+};
+
+const galvanicParticles = {
+  electrons:   [],   // { t: 0..1 }  path parameter along wire
+  bridgeIons:  [],   // { type:'cation'|'anion', t:0..1, label }
+  anodeIons:   [],   // { x, y, vx, vy, alpha } – Zn²⁺ drifting away from anode
+  cathodeIons: [],   // { x, y, vx, vy, alpha } – Cu²⁺ drifting toward cathode
+};
+
+// ── Layout helper ────────────────────────────────────────────
+function galvanicLayout() {
+  const W = galvanicCanvas.width;
+  const H = galvanicCanvas.height;
+
+  const beakerW  = 200;
+  const beakerH  = 220;
+  const topY     = 100;          // top of beaker
+  const leftX    = 20;
+  const rightX   = W - beakerW - 20;
+  const solutionH = 145;         // water height inside beaker
+
+  // Electrode positions (inside each beaker)
+  const leftElecX  = leftX  + beakerW * 0.38;
+  const rightElecX = rightX + beakerW * 0.62;
+
+  // Wire runs above the beakers
+  const wireY = 48;
+
+  // Salt bridge – U-tube that enters each beaker from the top, inside the water
+  const bridgeLX = leftX  + beakerW * 0.72;  // left arm x (inside left beaker)
+  const bridgeRX = rightX + beakerW * 0.28;  // right arm x (inside right beaker)
+  const bridgeTopY  = topY - 12;             // top of bridge arc (just above beaker rim)
+  const bridgeBotY  = topY + beakerH - solutionH + 60; // arm dips 60px into solution
+
+  // Electrode top/bottom limits (clamped inside beaker)
+  const elecTop  = topY + 10;
+  const elecBotMax = topY + beakerH - 10;
+
+  return {
+    W, H, beakerW, beakerH, topY, leftX, rightX,
+    solutionH, leftElecX, rightElecX,
+    wireY, bridgeLX, bridgeRX, bridgeTopY, bridgeBotY,
+    elecTop, elecBotMax,
+  };
+}
+
+// ── Parameterised path helpers ───────────────────────────────
+
+// Returns {x,y} for electron along the wire path (t ∈ [0,1])
+// Wire: anode-top → up → across → down → cathode-top
+function electronPos(t, layout) {
+  const { leftElecX, rightElecX, wireY, elecTop } = layout;
+  const upLen     = elecTop - wireY;            // pixels going UP (positive value)
+  const acrossLen = rightElecX - leftElecX;
+  const totalLen  = upLen + acrossLen + upLen;
+  const d = t * totalLen;
+
+  if (d <= upLen) {
+    return { x: leftElecX,  y: elecTop - d };
+  } else if (d <= upLen + acrossLen) {
+    return { x: leftElecX + (d - upLen), y: wireY };
+  } else {
+    return { x: rightElecX, y: wireY + (d - upLen - acrossLen) };
+  }
+}
+
+// Returns {x,y} for bridge ion along the U-tube (t ∈ [0,1])
+// t=0 → bottom of left arm (inside left beaker)
+// t=1 → bottom of right arm (inside right beaker)
+function bridgeIonPos(t, layout) {
+  const { bridgeLX, bridgeRX, bridgeTopY, bridgeBotY } = layout;
+  const armLen    = bridgeBotY - bridgeTopY;    // vertical segment length
+  const acrossLen = bridgeRX - bridgeLX;
+  const totalLen  = armLen + acrossLen + armLen;
+  const d = t * totalLen;
+
+  if (d <= armLen) {
+    // Ascending left arm
+    return { x: bridgeLX, y: bridgeBotY - d };
+  } else if (d <= armLen + acrossLen) {
+    // Horizontal top
+    return { x: bridgeLX + (d - armLen), y: bridgeTopY };
+  } else {
+    // Descending right arm
+    return { x: bridgeRX, y: bridgeTopY + (d - armLen - acrossLen) };
+  }
+}
+
+// ── Nernst equation (uses LCM of half-reaction electron counts) ──
+function computeEcell() {
+  const { anode, cathode } = GALVANIC_CONSTANTS;
+  const znConc = Math.max(1e-9, galvanicState.zn2Moles / galvanicState.vol);
+  const cuConc = Math.max(1e-9, galvanicState.cu2Moles / galvanicState.vol);
+
+  // Balanced overall reaction: n2*Zn + n1*Cu²⁺ → n2*Zn²⁺ + n1*Cu
+  // Q = [Zn²⁺]^n2 / [Cu²⁺]^n2  (same exponents when balanced via LCM)
+  const n = lcm(anode.n, cathode.n);        // electrons in balanced reaction
+  const stoichAnode   = n / anode.n;        // how many anode half-rxns are combined
+  const stoichCathode = n / cathode.n;      // how many cathode half-rxns are combined
+
+  const Q = Math.pow(znConc, stoichAnode) / Math.pow(cuConc, stoichCathode);
+  const E0 = cathode.e0 - anode.e0;
+  return E0 - (0.0592 / n) * Math.log10(Q);
+}
+
+// ── UI helpers ───────────────────────────────────────────────
+function setGalvanicInputsDisabled(disabled) {
+  ['zn-conc', 'cu-conc', 'cell-vol', 'zn-mass', 'cu-mass', 'salt-bridge-select'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+function readGalvanicInputs() {
+  const znConc = parseFloat(document.getElementById('zn-conc').value) || 1;
+  const cuConc = parseFloat(document.getElementById('cu-conc').value) || 1;
+  const volML  = parseFloat(document.getElementById('cell-vol').value) || 100;
+  const znMass = parseFloat(document.getElementById('zn-mass').value) || 5;
+  const cuMass = parseFloat(document.getElementById('cu-mass').value) || 5;
+  const sb     = document.getElementById('salt-bridge-select').value || 'KNO3';
+
+  galvanicState.vol      = Math.max(0.01, volML / 1000);
+  galvanicState.zn2Moles = Math.max(0, znConc) * galvanicState.vol;
+  galvanicState.cu2Moles = Math.max(0, cuConc) * galvanicState.vol;
+  galvanicState.znMoles  = Math.max(0, znMass) / GALVANIC_CONSTANTS.anode.molarMass;
+  galvanicState.cuMoles  = Math.max(0, cuMass) / GALVANIC_CONSTANTS.cathode.molarMass;
+  galvanicState.znMassInit = Math.max(0, znMass);
+  galvanicState.cuMassInit = Math.max(0, cuMass);
+  galvanicState.saltBridge = sb;
+
+  galvanicState.time             = 0;
+  galvanicState.electronsMoved   = 0;
+  galvanicState.anionsMoved      = 0;
+  galvanicState.cationsMoved     = 0;
+  galvanicState.pendingElectrons = 0;
+  galvanicState.pendingAnions    = 0;
+  galvanicState.pendingCations   = 0;
+  galvanicState.status           = 'ready';
+
+  galvanicParticles.electrons.length   = 0;
+  galvanicParticles.bridgeIons.length  = 0;
+  galvanicParticles.anodeIons.length   = 0;
+  galvanicParticles.cathodeIons.length = 0;
+
+  // Update summary box
+  const sbInfo = SALT_BRIDGES[sb] || SALT_BRIDGES.KNO3;
+  const rxnBox = document.getElementById('salt-bridge-rxn-box');
+  if (rxnBox) rxnBox.textContent = `Salt bridge: ${sb} (${sbInfo.label.split('(')[1]}`;
+}
+
+function galvanicStatusText() {
+  const znConc = (galvanicState.zn2Moles / galvanicState.vol).toFixed(3);
+  const cuConc = (galvanicState.cu2Moles / galvanicState.vol).toFixed(3);
+  if (!galvanicState.locked) {
+    return 'Set the half-cell concentrations, then start the reaction. Zn is oxidized at the anode, Cu²⁺ is reduced at the cathode.';
+  }
+  if (galvanicState.running) {
+    return `Electrons flow Zn → Cu. [Zn²⁺] rises (${znConc} M) while [Cu²⁺] drops (${cuConc} M). Salt bridge ions migrate to maintain charge balance.`;
+  }
+  if (galvanicState.status === 'equilibrium') {
+    return 'The cell has reached equilibrium (Ecell ≈ 0). Reset to change starting concentrations.';
+  }
+  if (galvanicState.status === 'depleted') {
+    return 'A reactant is depleted. Reset to recharge the galvanic cell.';
+  }
+  return 'Simulation paused. Resume the reaction or reset the cell to change inputs.';
+}
+
+function updateGalvanicDisplay() {
+  const eCell  = computeEcell();
+  const znConc = galvanicState.zn2Moles / galvanicState.vol;
+  const cuConc = galvanicState.cu2Moles / galvanicState.vol;
+  const znMass = galvanicState.znMoles * GALVANIC_CONSTANTS.anode.molarMass;
+  const cuMass = galvanicState.cuMoles * GALVANIC_CONSTANTS.cathode.molarMass;
+  const Q      = znConc / Math.max(1e-9, cuConc);
+  const sbInfo = SALT_BRIDGES[galvanicState.saltBridge] || SALT_BRIDGES.KNO3;
+
+  document.getElementById('gc-ecell').textContent  = `${eCell.toFixed(3)} V`;
+  document.getElementById('gc-time').textContent   = `${galvanicState.time.toFixed(1)} s`;
+  document.getElementById('gc-zn-mass').textContent = `${znMass.toFixed(3)} g`;
+  document.getElementById('gc-cu-mass').textContent = `${cuMass.toFixed(3)} g`;
+  document.getElementById('gc-zn-conc').textContent = `${znConc.toFixed(3)} M`;
+  document.getElementById('gc-cu-conc').textContent = `${cuConc.toFixed(3)} M`;
+  document.getElementById('gc-charge').textContent  = `${(galvanicState.electronsMoved * GALVANIC_CONSTANTS.faraday).toFixed(1)} C`;
+  document.getElementById('gc-ions').textContent    =
+    `${sbInfo.cation} ${galvanicState.cationsMoved.toFixed(4)} mol | ${sbInfo.anion} ${galvanicState.anionsMoved.toFixed(4)} mol`;
+  document.getElementById('gc-q').textContent = Q.toExponential(2);
+
+  const explainEl = document.getElementById('galvanic-explanation-text');
+  if (explainEl) explainEl.textContent = galvanicStatusText();
+}
+
+// ── Simulation step ──────────────────────────────────────────
+function stepGalvanic(dt) {
+  const eCell = computeEcell();
+  if (eCell <= 0.001) {
+    stopGalvanic('equilibrium');
+    showToast('Cell reached equilibrium (Ecell ≈ 0).');
+    return;
+  }
+
+  const rate         = galvanicState.baseRate * galvanicState.speed * eCell;
+  let   reactionMoles = rate * dt;
+  const maxMoles     = Math.min(galvanicState.znMoles, galvanicState.cu2Moles);
+  reactionMoles = Math.min(reactionMoles, maxMoles);
+
+  if (reactionMoles <= 0) {
+    stopGalvanic('depleted');
+    showToast('Reaction stopped. A reactant is depleted.');
+    return;
+  }
+
+  const n = GALVANIC_CONSTANTS.anode.n;          // 2 for Zn/Cu
+
+  galvanicState.znMoles  -= reactionMoles;
+  galvanicState.cu2Moles -= reactionMoles;
+  galvanicState.zn2Moles += reactionMoles;
+  galvanicState.cuMoles  += reactionMoles;
+
+  galvanicState.electronsMoved += reactionMoles * n;
+  galvanicState.cationsMoved   += reactionMoles * n;
+  galvanicState.anionsMoved    += reactionMoles * n;
+
+  // Scale particle spawn with reaction amount
+  galvanicState.pendingElectrons += reactionMoles * 2000;
+  galvanicState.pendingCations   += reactionMoles * 1200;
+  galvanicState.pendingAnions    += reactionMoles * 1200;
+
+  galvanicState.time += dt;
+  updateGalvanicDisplay();
+}
+
+// ── Start / pause / stop / reset ────────────────────────────
+function startGalvanic() {
+  if (galvanicState.running) return;
+  if (!galvanicState.locked) readGalvanicInputs();
+  galvanicState.running = true;
+  galvanicState.locked  = true;
+  galvanicState.status  = 'running';
+  setGalvanicInputsDisabled(true);
+  const btn = document.getElementById('galvanic-toggle');
+  if (btn) btn.textContent = 'Pause Reaction';
+  galvanicState.tickInterval = setInterval(() => stepGalvanic(0.12), 120);
+  updateGalvanicDisplay();
+}
+
+function pauseGalvanic() {
+  galvanicState.running = false;
+  galvanicState.status  = 'paused';
+  clearInterval(galvanicState.tickInterval);
+  galvanicState.tickInterval = null;
+  const btn = document.getElementById('galvanic-toggle');
+  if (btn) btn.textContent = 'Resume Reaction';
+  updateGalvanicDisplay();
+}
+
+function stopGalvanic(status) {
+  galvanicState.running = false;
+  galvanicState.status  = status;
+  clearInterval(galvanicState.tickInterval);
+  galvanicState.tickInterval = null;
+  const btn = document.getElementById('galvanic-toggle');
+  if (btn) btn.textContent = 'Resume Reaction';
+  updateGalvanicDisplay();
+}
+
+function resetGalvanic() {
+  clearInterval(galvanicState.tickInterval);
+  galvanicState.tickInterval = null;
+  galvanicState.running = false;
+  galvanicState.locked  = false;
+  galvanicState.status  = 'ready';
+  setGalvanicInputsDisabled(false);
+  const btn = document.getElementById('galvanic-toggle');
+  if (btn) btn.textContent = 'Start Reaction';
+  readGalvanicInputs();
+  updateGalvanicDisplay();
+  drawGalvanicScene();
+}
+
+// ── Drawing ──────────────────────────────────────────────────
+function drawGalvanicScene() {
+  if (!galvanicCtx) return;
+  const ctx    = galvanicCtx;
+  const layout = galvanicLayout();
+  const dark   = isDark;
+
+  const { W, H, beakerW, beakerH, topY, leftX, rightX,
+          solutionH, leftElecX, rightElecX,
+          wireY, bridgeLX, bridgeRX, bridgeTopY, bridgeBotY,
+          elecTop, elecBotMax } = layout;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = dark ? '#2b2b2b' : '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  const znConc   = galvanicState.zn2Moles / galvanicState.vol;
+  const cuConc   = galvanicState.cu2Moles / galvanicState.vol;
+  const znAlpha  = Math.min(0.85, 0.2 + znConc / 5);
+  const cuAlpha  = Math.min(0.85, 0.2 + cuConc / 5);
+
+  const solTop   = topY + beakerH - solutionH;    // y where solution surface is
+
+  // ── Solutions ──────────────────────────────────────────────
+  ctx.fillStyle = `rgba(130,150,170,${znAlpha})`;
+  ctx.fillRect(leftX  + 2, solTop, beakerW - 4, solutionH - 2);
+  ctx.fillStyle = `rgba(80,140,235,${cuAlpha})`;
+  ctx.fillRect(rightX + 2, solTop, beakerW - 4, solutionH - 2);
+
+  // ── Beakers (open-top: bottom + two sides) ─────────────────
+  ctx.strokeStyle = dark ? '#dddddd' : '#222222';
+  ctx.lineWidth   = 2;
+  ctx.beginPath();
+  // Left beaker – three sides
+  ctx.moveTo(leftX,           topY);
+  ctx.lineTo(leftX,           topY + beakerH);
+  ctx.lineTo(leftX + beakerW, topY + beakerH);
+  ctx.lineTo(leftX + beakerW, topY);
+  ctx.stroke();
+  // Right beaker – three sides
+  ctx.beginPath();
+  ctx.moveTo(rightX,           topY);
+  ctx.lineTo(rightX,           topY + beakerH);
+  ctx.lineTo(rightX + beakerW, topY + beakerH);
+  ctx.lineTo(rightX + beakerW, topY);
+  ctx.stroke();
+
+  // ── Salt bridge (U-tube) ───────────────────────────────────
+  const bridgeThick = 10;
+  const bridgeColor = dark ? '#c8a84b' : '#9a7b2e';
+  // Left arm (inside left beaker solution, visible in water)
+  ctx.fillStyle = bridgeColor;
+  ctx.fillRect(bridgeLX - bridgeThick / 2, bridgeTopY, bridgeThick, bridgeBotY - bridgeTopY);
+  // Horizontal top
+  ctx.fillRect(bridgeLX - bridgeThick / 2, bridgeTopY - bridgeThick / 2,
+               bridgeRX - bridgeLX + bridgeThick, bridgeThick);
+  // Right arm (inside right beaker solution)
+  ctx.fillRect(bridgeRX - bridgeThick / 2, bridgeTopY, bridgeThick, bridgeBotY - bridgeTopY);
+
+  // ── Electrodes ─────────────────────────────────────────────
+  // Both electrodes use a 60% base height; anode shrinks, cathode grows (capped at 100%)
+  const BASE_ELEC_FRAC = 0.60;
+  const elecMaxH = elecBotMax - elecTop;
+
+  const znMassCur  = galvanicState.znMoles  * GALVANIC_CONSTANTS.anode.molarMass;
+  const znMassInit = galvanicState.znMassInit || 5;
+  const znFrac     = Math.max(0.05, znMassCur / znMassInit);
+  const znElecH    = Math.round(Math.min(elecMaxH, elecMaxH * BASE_ELEC_FRAC * znFrac));
+
+  // Cathode grows as Cu is deposited; cuMoles/cuMassInit can exceed 1
+  const cuMassCur  = galvanicState.cuMoles  * GALVANIC_CONSTANTS.cathode.molarMass;
+  const cuMassInit = galvanicState.cuMassInit || 5;
+  const cuGrowFrac = cuMassCur / cuMassInit;     // > 1 when growing beyond initial mass
+  const cuElecH    = Math.round(Math.min(elecMaxH, elecMaxH * BASE_ELEC_FRAC * cuGrowFrac));
+
+  const elecW = 12;
+  // Anode (gray – Zn)
+  ctx.fillStyle = dark ? '#aaaaaa' : '#888888';
+  ctx.fillRect(leftElecX  - elecW / 2, elecBotMax - znElecH, elecW, znElecH);
+  // Cathode (copper colour – Cu)
+  ctx.fillStyle = dark ? '#c87941' : '#b87333';
+  ctx.fillRect(rightElecX - elecW / 2, elecBotMax - cuElecH, elecW, cuElecH);
+
+  // ── Wire ───────────────────────────────────────────────────
+  ctx.strokeStyle = dark ? '#bbbbbb' : '#111111';
+  ctx.lineWidth   = 3;
+  ctx.beginPath();
+  ctx.moveTo(leftElecX,  elecTop);
+  ctx.lineTo(leftElecX,  wireY);
+  ctx.lineTo(rightElecX, wireY);
+  ctx.lineTo(rightElecX, elecTop);
+  ctx.stroke();
+
+  // Arrowhead pointing right (electrons flow left→right through wire)
+  const arrowX = (leftElecX + rightElecX) / 2;
+  ctx.fillStyle = dark ? '#bbbbbb' : '#111111';
+  ctx.beginPath();
+  ctx.moveTo(arrowX - 8, wireY - 7);
+  ctx.lineTo(arrowX + 8, wireY);
+  ctx.lineTo(arrowX - 8, wireY + 7);
+  ctx.closePath();
+  ctx.fill();
+
+  // ── Electron particles (follow wire) ──────────────────────
+  galvanicParticles.electrons.forEach(e => {
+    const pos = electronPos(e.t, layout);
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle   = '#ffdd44';
+    ctx.fill();
+    ctx.strokeStyle = dark ? '#000000' : '#333333';
+    ctx.lineWidth   = 1;
+    ctx.stroke();
+  });
+
+  // ── Salt bridge ion particles ──────────────────────────────
+  const sbInfo = SALT_BRIDGES[galvanicState.saltBridge] || SALT_BRIDGES.KNO3;
+  ctx.font      = 'bold 9px Arial';
+  ctx.textAlign = 'center';
+
+  galvanicParticles.bridgeIons.forEach(ion => {
+    const pos = bridgeIonPos(ion.t, layout);
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle   = ion.type === 'cation' ? '#bb66ff' : '#44cc55';
+    ctx.fill();
+    ctx.strokeStyle = dark ? '#000000' : '#333333';
+    ctx.lineWidth   = 1;
+    ctx.stroke();
+    ctx.fillStyle   = dark ? '#ffffff' : '#000000';
+    ctx.fillText(ion.type === 'cation' ? sbInfo.cation : sbInfo.anion, pos.x, pos.y - 8);
+  });
+
+  // ── Anode half-cell ions (Zn²⁺ moving away from electrode) ─
+  galvanicParticles.anodeIons.forEach(p => {
+    ctx.globalAlpha = p.alpha;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#8090b0';
+    ctx.fill();
+    ctx.font      = 'bold 8px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = dark ? '#ddeeff' : '#223355';
+    ctx.fillText('Zn²⁺', p.x, p.y - 5);
+    ctx.globalAlpha = 1;
+  });
+
+  // ── Cathode half-cell ions (Cu²⁺ moving toward electrode) ──
+  galvanicParticles.cathodeIons.forEach(p => {
+    ctx.globalAlpha = p.alpha;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#4080cc';
+    ctx.fill();
+    ctx.font      = 'bold 8px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = dark ? '#bbddff' : '#1a3a6a';
+    ctx.fillText('Cu²⁺', p.x, p.y - 5);
+    ctx.globalAlpha = 1;
+  });
+
+  // ── Labels ────────────────────────────────────────────────
+  ctx.fillStyle = dark ? '#eeeeee' : '#111111';
+  ctx.font      = 'bold 13px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Anode (−)',   leftX  + beakerW / 2, topY - 16);
+  ctx.fillText('Cathode (+)', rightX + beakerW / 2, topY - 16);
+  ctx.fillText('Zn',  leftElecX,  elecBotMax + 14);
+  ctx.fillText('Cu', rightElecX, elecBotMax + 14);
+
+  ctx.font      = '11px Courier New, monospace';
+  ctx.fillText(`[Zn²⁺] ${znConc.toFixed(2)} M`, leftX  + beakerW / 2, topY + beakerH + 20);
+  ctx.fillText(`[Cu²⁺] ${cuConc.toFixed(2)} M`, rightX + beakerW / 2, topY + beakerH + 20);
+
+  ctx.font      = '11px Arial';
+  ctx.fillStyle = dark ? '#ffee88' : '#887700';
+  ctx.fillText('e⁻ →', (leftElecX + rightElecX) / 2 - 16, wireY - 10);
+
+  ctx.fillStyle = dark ? '#c8a84b' : '#9a7b2e';
+  ctx.fillText('Salt bridge', (bridgeLX + bridgeRX) / 2, bridgeTopY - 16);
+
+  ctx.textAlign = 'left';
+}
+
+// ── Animation loop ───────────────────────────────────────────
+function animateGalvanic() {
+  if (!galvanicCtx) return;
+
+  const layout      = galvanicLayout();
+  const electronSpd = 0.006 * galvanicState.speed;  // t per frame
+  const ionSpd      = 0.003 * galvanicState.speed;
+
+  // Spawn from pending queues (only while running)
+  if (galvanicState.running) {
+    const spawnE = Math.floor(galvanicState.pendingElectrons);
+    if (spawnE > 0 && galvanicParticles.electrons.length < 12) {
+      galvanicState.pendingElectrons -= spawnE;
+      for (let i = 0; i < Math.min(spawnE, 2); i++) {
+        galvanicParticles.electrons.push({ t: 0 });
+      }
+    } else if (spawnE > 0) {
+      galvanicState.pendingElectrons = 0;
+    }
+    const spawnC = Math.floor(galvanicState.pendingCations);
+    if (spawnC > 0 && galvanicParticles.bridgeIons.filter(x => x.type === 'cation').length < 6) {
+      galvanicState.pendingCations -= spawnC;
+      for (let i = 0; i < Math.min(spawnC, 1); i++) {
+        galvanicParticles.bridgeIons.push({ type: 'cation', t: 0 });
+      }
+    } else if (spawnC > 0) {
+      galvanicState.pendingCations = 0;
+    }
+    const spawnA = Math.floor(galvanicState.pendingAnions);
+    if (spawnA > 0 && galvanicParticles.bridgeIons.filter(x => x.type === 'anion').length < 6) {
+      galvanicState.pendingAnions -= spawnA;
+      for (let i = 0; i < Math.min(spawnA, 1); i++) {
+        galvanicParticles.bridgeIons.push({ type: 'anion', t: 1 });
+      }
+    } else if (spawnA > 0) {
+      galvanicState.pendingAnions = 0;
+    }
+
+    // Spawn Zn²⁺ leaving anode
+    if (Math.random() < 0.08 * galvanicState.speed && galvanicParticles.anodeIons.length < 15) {
+      const solTop2 = layout.topY + layout.beakerH - layout.solutionH;
+      galvanicParticles.anodeIons.push({
+        x:     layout.leftElecX + (Math.random() - 0.5) * 4,
+        y:     layout.elecBotMax - 20,
+        vx:    (Math.random() - 0.5) * 0.6,
+        vy:    -(0.3 + Math.random() * 0.3),
+        alpha: 0.9,
+        boundsL: layout.leftX + 4,
+        boundsR: layout.leftX + layout.beakerW - 4,
+        boundsT: solTop2 + 4,
+        boundsB: layout.elecBotMax,
+      });
+    }
+
+    // Spawn Cu²⁺ moving toward cathode from within the solution
+    if (Math.random() < 0.08 * galvanicState.speed) {
+      const solTop2 = layout.topY + layout.beakerH - layout.solutionH;
+      const spawnX  = layout.rightX + 4 + Math.random() * (layout.beakerW - 8);
+      const spawnY  = solTop2 + 4 + Math.random() * (layout.solutionH - 8);
+      galvanicParticles.cathodeIons.push({
+        x:     spawnX,
+        y:     spawnY,
+        tx:    layout.rightElecX,      // target x (electrode)
+        ty:    layout.elecBotMax - 30, // target y (mid-electrode)
+        alpha: 0.9,
+        boundsL: layout.rightX + 4,
+        boundsR: layout.rightX + layout.beakerW - 4,
+        boundsT: solTop2 + 4,
+        boundsB: layout.elecBotMax,
+      });
+    }
+  }
+
+  // Advance electrons along wire
+  galvanicParticles.electrons.forEach(e => { e.t += electronSpd; });
+  galvanicParticles.electrons = galvanicParticles.electrons.filter(e => e.t <= 1);
+
+  // Advance bridge ions
+  galvanicParticles.bridgeIons.forEach(ion => {
+    if (ion.type === 'cation') {
+      ion.t += ionSpd;
+    } else {
+      ion.t -= ionSpd;
+    }
+  });
+  galvanicParticles.bridgeIons = galvanicParticles.bridgeIons.filter(ion => ion.t >= 0 && ion.t <= 1);
+
+  // Advance anode Zn²⁺ particles (drift away, fade out)
+  galvanicParticles.anodeIons.forEach(p => {
+    p.x    += p.vx;
+    p.y    += p.vy;
+    p.alpha -= 0.007;
+    // Bounce off beaker walls horizontally
+    if (p.x < p.boundsL || p.x > p.boundsR) p.vx *= -1;
+    if (p.y < p.boundsT) { p.vy *= -0.5; p.y = p.boundsT; }
+    if (p.y > p.boundsB) { p.vy *= -0.5; p.y = p.boundsB; }
+  });
+  galvanicParticles.anodeIons = galvanicParticles.anodeIons.filter(p => p.alpha > 0.05);
+
+  // Advance cathode Cu²⁺ particles (move toward electrode, fade out on arrival)
+  galvanicParticles.cathodeIons.forEach(p => {
+    const dx = p.tx - p.x;
+    const dy = p.ty - p.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > 2) {
+      const speed = 0.6 + Math.random() * 0.2;
+      p.x += (dx / dist) * speed;
+      p.y += (dy / dist) * speed;
+    } else {
+      p.alpha -= 0.05;
+    }
+    // Clamp to beaker bounds
+    p.x = Math.max(p.boundsL, Math.min(p.boundsR, p.x));
+    p.y = Math.max(p.boundsT, Math.min(p.boundsB, p.y));
+  });
+  galvanicParticles.cathodeIons = galvanicParticles.cathodeIons.filter(p => p.alpha > 0.05);
+
+  drawGalvanicScene();
+  galvanicAnimFrame = requestAnimationFrame(animateGalvanic);
+}
+
+// ── Initialise ───────────────────────────────────────────────
+function initGalvanic() {
+  galvanicInitialized = true;
+  galvanicCanvas      = document.getElementById('galvanic-canvas');
+  if (!galvanicCanvas) return;
+  galvanicCtx = galvanicCanvas.getContext('2d');
+
+  // Speed slider
+  const speedEl = document.getElementById('galvanic-speed');
+  if (speedEl) {
+    galvanicState.speed = parseFloat(speedEl.value) || 1;
+    document.getElementById('galvanic-speed-label').textContent = galvanicState.speed.toFixed(1);
+    speedEl.addEventListener('input', e => {
+      galvanicState.speed = parseFloat(e.target.value) || 1;
+      document.getElementById('galvanic-speed-label').textContent = galvanicState.speed.toFixed(1);
+    });
+  }
+
+  // Salt bridge selector
+  const sbSel = document.getElementById('salt-bridge-select');
+  if (sbSel) {
+    sbSel.addEventListener('change', () => {
+      if (galvanicState.locked) {
+        showToast('Reset the cell to change the salt bridge.');
+        sbSel.value = galvanicState.saltBridge;
+        return;
+      }
+      galvanicState.saltBridge = sbSel.value;
+      readGalvanicInputs();
+      updateGalvanicDisplay();
+      drawGalvanicScene();
+    });
+  }
+
+  // Number inputs
+  ['zn-conc', 'cu-conc', 'cell-vol', 'zn-mass', 'cu-mass'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      if (galvanicState.locked) {
+        showToast('Reset the cell to change concentrations.');
+        el.value = el.defaultValue;
+        return;
+      }
+      readGalvanicInputs();
+      updateGalvanicDisplay();
+      drawGalvanicScene();
+    });
+  });
+
+  document.getElementById('galvanic-toggle').addEventListener('click', () => {
+    if (galvanicState.running) pauseGalvanic();
+    else startGalvanic();
+  });
+
+  document.getElementById('galvanic-reset').addEventListener('click', resetGalvanic);
+
+  readGalvanicInputs();
+  updateGalvanicDisplay();
+  drawGalvanicScene();
+
+  if (galvanicAnimFrame) cancelAnimationFrame(galvanicAnimFrame);
+  galvanicAnimFrame = requestAnimationFrame(animateGalvanic);
+}
